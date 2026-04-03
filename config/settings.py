@@ -133,6 +133,19 @@ ORDERBOOK_STALE_THRESHOLD: float = float(os.getenv("ORDERBOOK_STALE_THRESHOLD", 
 """Seconds before orderbook data is considered stale (default: 30s)."""
 
 # =============================================================================
+# SMART MONEY (Polymarket leaderboard tracking)
+# =============================================================================
+
+SMART_MONEY_POLL_INTERVAL: float = float(os.getenv("SMART_MONEY_POLL_INTERVAL", "600.0"))
+"""Seconds between Polymarket smart money polling cycles (default: 600s = 10 min)."""
+
+SMART_MONEY_MIN_TRADERS: int = int(os.getenv("SMART_MONEY_MIN_TRADERS", "3"))
+"""Minimum number of top traders on the same side to generate a smart money signal."""
+
+POLYMARKET_DATA_API: str = "https://data-api.polymarket.com"
+"""Polymarket Data API base URL. Public, no auth required, read-only from US."""
+
+# =============================================================================
 # BUDGET GUARD
 # =============================================================================
 
@@ -192,6 +205,9 @@ __all__ = [
     "BALLDONTLIE_API_KEY",
     "NBA_POLL_INTERVAL",
     "ORDERBOOK_STALE_THRESHOLD",
+    "SMART_MONEY_POLL_INTERVAL",
+    "SMART_MONEY_MIN_TRADERS",
+    "POLYMARKET_DATA_API",
     "DEBUG_MODE",
     "console",
 ]

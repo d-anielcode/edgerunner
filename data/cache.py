@@ -99,6 +99,24 @@ class NbaGameUpdate(QueueMsg):
     game_time: str = ""  # e.g. "8:42 Q3"
 
 
+class SmartMoneySignal(QueueMsg):
+    """
+    Pushed when multiple top Polymarket traders converge on the same NBA position.
+
+    This is a "smart money" consensus signal — when 3+ top sports traders
+    are all betting the same side on an NBA market, it suggests the true
+    probability differs from what the market is pricing.
+    """
+
+    msg_type: Literal["smart_money"] = "smart_money"
+    market_title: str  # Polymarket market title (e.g., "Lakers vs Celtics")
+    consensus_side: str  # "yes" or "no" — which side top traders favor
+    trader_count: int  # How many top traders hold this position
+    total_size_usd: float  # Combined position size in USD
+    avg_entry_price: float  # Average entry price across traders
+    top_trader_names: list[str] = []  # Usernames of traders in this position
+
+
 class StaleDataAlert(QueueMsg):
     """Pushed when a data source hasn't updated within the threshold."""
 
@@ -157,6 +175,7 @@ class AgentCache:
         self._live_games: dict[int, NbaGameUpdate] = {}
         self._bankroll: Decimal = Decimal("0")
         self._positions: dict[str, Position] = {}
+        self._smart_money: dict[str, SmartMoneySignal] = {}
 
     # --- Orderbook ---
 
@@ -272,6 +291,20 @@ class AgentCache:
     def get_positions(self) -> dict[str, Position]:
         """Get all open positions."""
         return dict(self._positions)
+
+    # --- Smart Money ---
+
+    def update_smart_money(self, signal: SmartMoneySignal) -> None:
+        """Store or update a smart money signal, keyed by market title."""
+        self._smart_money[signal.market_title] = signal
+
+    def get_smart_money_signals(self) -> dict[str, SmartMoneySignal]:
+        """Get all current smart money signals."""
+        return dict(self._smart_money)
+
+    def clear_smart_money(self) -> None:
+        """Clear all smart money signals (called before each refresh cycle)."""
+        self._smart_money.clear()
 
     def get_position_count(self) -> int:
         """Get the number of open positions."""
