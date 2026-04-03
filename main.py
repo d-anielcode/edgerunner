@@ -63,14 +63,27 @@ WATCHDOG_INTERVAL: float = 10.0
 # Tracked NBA market tickers — will be populated from Kalshi API
 # For MVP, these are manually configured. In V2, auto-discovered.
 DEFAULT_TRACKED_TICKERS: list[str] = [
-    # Add real Kalshi NBA tickers here once you have demo API access
-    # Example: "KXNBA-LEBRON-PTS-O25", "KXNBA-CURRY-PTS-O28"
+    # Apr 3 2026 — ATL vs BKN, CHI vs NYK, NOP vs SAC
+    "KXNBASPREAD-26APR03ATLBKN-ATL33",
+    "KXNBASPREAD-26APR03CHINYK-CHI2",
+    "KXNBA1HSPREAD-26APR03NOPSAC-SAC7",
+    "KXNBA1HSPREAD-26APR03NOPSAC-SAC4",
+    "KXNBA1HSPREAD-26APR03NOPSAC-SAC1",
+    "KXNBA1HSPREAD-26APR03NOPSAC-NOP2",
+    "KXNBA1HSPREAD-26APR03NOPSAC-NOP5",
+    "KXNBA1HTOTAL-26APR03NOPSAC-122",
+    "KXNBA1HTOTAL-26APR03NOPSAC-119",
+    "KXNBA1HTOTAL-26APR03NOPSAC-116",
 ]
 
 # Tracked NBA players for stats polling
 DEFAULT_TRACKED_PLAYERS: list[dict] = [
-    # Add players whose props you want to trade
-    # Example: {"name": "LeBron James"}, {"name": "Stephen Curry"}
+    # Key players from tonight's games
+    {"name": "Trae Young"},      # ATL
+    {"name": "Cam Thomas"},      # BKN
+    {"name": "Zach LaVine"},     # CHI
+    {"name": "Jalen Brunson"},   # NYK
+    {"name": "De'Aaron Fox"},    # SAC
 ]
 
 

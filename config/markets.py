@@ -46,21 +46,23 @@ KALSHI_NBA_PREFIX: str = "KXNBA"
 # Regex patterns for matching tickers to categories.
 # Each pattern matches the relevant segment of a Kalshi NBA ticker.
 MARKET_TICKER_PATTERNS: dict[MarketCategory, re.Pattern[str]] = {
-    MarketCategory.PLAYER_POINTS: re.compile(r"KXNBA-.*-PTS-", re.IGNORECASE),
-    MarketCategory.PLAYER_REBOUNDS: re.compile(r"KXNBA-.*-REB-", re.IGNORECASE),
-    MarketCategory.PLAYER_ASSISTS: re.compile(r"KXNBA-.*-AST-", re.IGNORECASE),
-    MarketCategory.PLAYER_THREES: re.compile(r"KXNBA-.*-3PT-", re.IGNORECASE),
-    MarketCategory.GAME_TOTAL: re.compile(r"KXNBA-.*-TOTAL-", re.IGNORECASE),
-    MarketCategory.GAME_SPREAD: re.compile(r"KXNBA-.*-SPREAD", re.IGNORECASE),
-    MarketCategory.GAME_WINNER: re.compile(r"KXNBA-.*-WIN", re.IGNORECASE),
+    MarketCategory.PLAYER_POINTS: re.compile(r"KXNBA.*PTS", re.IGNORECASE),
+    MarketCategory.PLAYER_REBOUNDS: re.compile(r"KXNBA.*REB", re.IGNORECASE),
+    MarketCategory.PLAYER_ASSISTS: re.compile(r"KXNBA.*AST", re.IGNORECASE),
+    MarketCategory.PLAYER_THREES: re.compile(r"KXNBA.*3PT", re.IGNORECASE),
+    MarketCategory.GAME_TOTAL: re.compile(r"KXNBA.*TOTAL", re.IGNORECASE),
+    MarketCategory.GAME_SPREAD: re.compile(r"KXNBA.*SPREAD", re.IGNORECASE),
+    MarketCategory.GAME_WINNER: re.compile(r"KXNBA.*WIN", re.IGNORECASE),
 }
 
 # Which categories the agent actively trades in V1.
-# Start narrow (player points only), expand after proving CLV.
+# Spread and total markets are live on Kalshi — enable them.
 SUPPORTED_CATEGORIES: list[MarketCategory] = [
     MarketCategory.PLAYER_POINTS,
     MarketCategory.PLAYER_REBOUNDS,
     MarketCategory.PLAYER_ASSISTS,
+    MarketCategory.GAME_SPREAD,
+    MarketCategory.GAME_TOTAL,
 ]
 
 # No trades within this many minutes of market close.
