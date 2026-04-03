@@ -45,6 +45,7 @@ from data.cache import (
     get_cache,
 )
 from data.feeds import KalshiFeed
+from data.market_poller import MarketPoller
 from data.nba_poller import NbaPoller
 from data.smart_money import SmartMoneyTracker
 from execution.kalshi_client import KalshiClient
@@ -118,6 +119,12 @@ class EdgeRunner:
         )
         self._analyzer: MarketAnalyzer = MarketAnalyzer()
         self._kalshi_client: KalshiClient = KalshiClient()
+        self._market_poller: MarketPoller = MarketPoller(
+            queue=self._queue,
+            cache=self._cache,
+            kalshi_client=self._kalshi_client,
+            tracked_tickers=DEFAULT_TRACKED_TICKERS,
+        )
         self._order_manager: OrderManager = OrderManager(kalshi_client=self._kalshi_client)
         self._alerter: DiscordAlerter = DiscordAlerter()
 
@@ -326,6 +333,7 @@ class EdgeRunner:
 
         # Stop all modules
         await self._feed.stop()
+        await self._market_poller.stop()
         await self._nba_poller.stop()
         await self._smart_money.stop()
         await self._kalshi_client.close()
@@ -367,6 +375,7 @@ class EdgeRunner:
         try:
             await asyncio.gather(
                 self._feed.run(),
+                self._market_poller.run(),
                 self._nba_poller.run(),
                 self._smart_money.run(),
                 self._signal_evaluator(),

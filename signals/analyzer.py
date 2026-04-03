@@ -47,7 +47,7 @@ console = Console()
 UTC = timezone.utc
 
 # Model ID — pinned to Haiku 4.5 for cost efficiency
-MODEL_ID: str = "claude-haiku-4-5-20250415"
+MODEL_ID: str = "claude-haiku-4-5"
 
 # Circuit breaker: opens after 3 consecutive failures, resets after 120 seconds.
 # When open, all calls immediately return PASS instead of hitting the API.
