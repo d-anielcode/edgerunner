@@ -120,6 +120,19 @@ MAX_SPREAD_CENTS: float = float(os.getenv("MAX_SPREAD_CENTS", "0.03"))
 """Maximum bid-ask spread in dollars to accept a trade (default: $0.03)."""
 
 # =============================================================================
+# DATA FEEDS
+# =============================================================================
+
+BALLDONTLIE_API_KEY: str | None = os.getenv("BALLDONTLIE_API_KEY")
+"""Optional BallDontLie API key. Free tier may work without it for basic endpoints."""
+
+NBA_POLL_INTERVAL: float = float(os.getenv("NBA_POLL_INTERVAL", "45.0"))
+"""Seconds between NBA data polling cycles (default: 45s)."""
+
+ORDERBOOK_STALE_THRESHOLD: float = float(os.getenv("ORDERBOOK_STALE_THRESHOLD", "30.0"))
+"""Seconds before orderbook data is considered stale (default: 30s)."""
+
+# =============================================================================
 # BUDGET GUARD
 # =============================================================================
 
@@ -176,6 +189,9 @@ __all__ = [
     "MIN_EDGE_THRESHOLD",
     "MAX_SPREAD_CENTS",
     "CLAUDE_MONTHLY_BUDGET_LIMIT",
+    "BALLDONTLIE_API_KEY",
+    "NBA_POLL_INTERVAL",
+    "ORDERBOOK_STALE_THRESHOLD",
     "DEBUG_MODE",
     "console",
 ]
