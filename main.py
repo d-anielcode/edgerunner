@@ -27,7 +27,7 @@ from decimal import Decimal
 
 from rich.console import Console
 
-from alerts.telegram import TelegramAlerter
+from alerts.discord import DiscordAlerter
 from config.settings import (
     DEBUG_MODE,
     ORDERBOOK_STALE_THRESHOLD,
@@ -106,7 +106,7 @@ class EdgeRunner:
         self._analyzer: MarketAnalyzer = MarketAnalyzer()
         self._kalshi_client: KalshiClient = KalshiClient()
         self._order_manager: OrderManager = OrderManager(kalshi_client=self._kalshi_client)
-        self._alerter: TelegramAlerter = TelegramAlerter()
+        self._alerter: DiscordAlerter = DiscordAlerter()
 
     async def _signal_evaluator(self) -> None:
         """

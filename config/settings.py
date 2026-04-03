@@ -97,8 +97,7 @@ if not KALSHI_PRIVATE_KEY_PATH.is_file():
 SUPABASE_URL: str = _require_env("SUPABASE_URL")
 SUPABASE_ANON_KEY: str = _require_env("SUPABASE_ANON_KEY")
 
-TELEGRAM_BOT_TOKEN: str = _require_env("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID: str = _require_env("TELEGRAM_CHAT_ID")
+DISCORD_WEBHOOK_URL: str = _require_env("DISCORD_WEBHOOK_URL")
 
 # =============================================================================
 # RISK PARAMETERS — Safe defaults, operator can override in .env
@@ -194,8 +193,7 @@ __all__ = [
     "KALSHI_PRIVATE_KEY_PATH",
     "SUPABASE_URL",
     "SUPABASE_ANON_KEY",
-    "TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_CHAT_ID",
+    "DISCORD_WEBHOOK_URL",
     "MAX_POSITION_PCT",
     "FRACTIONAL_KELLY",
     "MAX_CONCURRENT_POSITIONS",
