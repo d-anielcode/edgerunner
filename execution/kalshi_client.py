@@ -84,8 +84,11 @@ class KalshiClient:
         Sign a request with RSA-PSS.
 
         Kalshi REST API requires:
-          signature = RSA-PSS-Sign(timestamp_ms + method + path)
-        Where method is uppercase (GET, POST, etc.) and path starts with /.
+          signature = RSA-PSS-Sign(timestamp_ms + method + full_path)
+        Where:
+          - method is uppercase (GET, POST, etc.)
+          - full_path includes /trade-api/v2 prefix (e.g., /trade-api/v2/portfolio/balance)
+          - query parameters are stripped before signing
 
         The private key is loaded from disk on each call. This avoids
         keeping key material in memory longer than necessary.
@@ -93,12 +96,22 @@ class KalshiClient:
         key_data = self._key_path.read_bytes()
         private_key = serialization.load_pem_private_key(key_data, password=None)
 
-        message = (timestamp_ms + method.upper() + path).encode("utf-8")
+        # Strip query params — Kalshi signs only the path portion
+        path_without_query = path.split("?")[0]
+
+        # Build the full path including /trade-api/v2 prefix
+        # The base URL is like https://demo-api.kalshi.co/trade-api/v2
+        # We need to sign /trade-api/v2 + path
+        from urllib.parse import urlparse
+        base_path = urlparse(self._base_url).path  # "/trade-api/v2"
+        full_path = base_path + path_without_query
+
+        message = (timestamp_ms + method.upper() + full_path).encode("utf-8")
         signature = private_key.sign(
             message,
             padding.PSS(
                 mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH,
+                salt_length=padding.PSS.DIGEST_LENGTH,
             ),
             hashes.SHA256(),
         )
