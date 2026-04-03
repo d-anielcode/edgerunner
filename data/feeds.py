@@ -78,74 +78,67 @@ class KalshiFeed:
 
     def _sign_timestamp(self, timestamp_ms: str) -> str:
         """
-        Sign a timestamp string with the RSA private key using PSS padding.
+        Sign the WebSocket auth message with RSA-PSS.
 
-        Kalshi WebSocket auth requires:
-        1. Generate a millisecond timestamp
-        2. Sign it with RSA-PSS (SHA-256, max salt length)
-        3. Base64-encode the signature
-        4. Send in the login command
-
-        The private key is loaded from disk on each connection attempt.
-        This avoids keeping key material in memory between reconnects.
+        Kalshi WS auth signs: timestamp + "GET" + "/trade-api/ws/v2"
+        This follows the same pattern as REST API requests.
+        Auth is done via HTTP headers at connection time (not a login message).
         """
         key_data = KALSHI_PRIVATE_KEY_PATH.read_bytes()
         private_key = serialization.load_pem_private_key(key_data, password=None)
 
-        message = timestamp_ms.encode("utf-8")
+        # Parse the WS path from the URL (e.g., "/trade-api/ws/v2")
+        from urllib.parse import urlparse
+        ws_path = urlparse(KALSHI_WS_URL).path
+
+        message = (timestamp_ms + "GET" + ws_path).encode("utf-8")
         signature = private_key.sign(
             message,
             padding.PSS(
                 mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH,
+                salt_length=padding.PSS.DIGEST_LENGTH,
             ),
             hashes.SHA256(),
         )
         return base64.b64encode(signature).decode("utf-8")
 
+    def _build_ws_headers(self) -> dict[str, str]:
+        """
+        Build authenticated headers for the WebSocket handshake.
+
+        Kalshi authenticates WebSocket connections via HTTP headers
+        during the initial handshake — NOT via a post-connection login message.
+        """
+        timestamp_ms = str(int(time.time() * 1000))
+        signature = self._sign_timestamp(timestamp_ms)
+
+        return {
+            "KALSHI-ACCESS-KEY": KALSHI_API_KEY_ID,
+            "KALSHI-ACCESS-SIGNATURE": signature,
+            "KALSHI-ACCESS-TIMESTAMP": timestamp_ms,
+        }
+
     # --- Connection + Auth ---
 
     async def _connect_and_auth(self) -> websockets.ClientConnection:
         """
-        Open WebSocket, send login command, wait for auth confirmation.
+        Open an authenticated WebSocket connection to Kalshi.
 
-        The Kalshi WS protocol is command-based JSON:
-        1. Connect to WSS URL
-        2. Send {"cmd": "login", "params": {api_key, timestamp, signature}}
-        3. Wait for response confirming auth
+        Auth happens at connection time via HTTP headers in the handshake.
+        No login message needed after connecting.
         """
+        headers = self._build_ws_headers()
+
         ws = await websockets.connect(
             KALSHI_WS_URL,
+            additional_headers=headers,
             ping_interval=20,
             ping_timeout=10,
             close_timeout=5,
         )
 
-        timestamp_ms = str(int(time.time() * 1000))
-        signature = self._sign_timestamp(timestamp_ms)
-
-        login_msg = {
-            "id": 1,
-            "cmd": "login",
-            "params": {
-                "api_key": KALSHI_API_KEY_ID,
-                "timestamp": int(timestamp_ms),
-                "signature": signature,
-            },
-        }
-
-        await ws.send(json.dumps(login_msg))
-
-        # Wait for login response (timeout after 10 seconds)
-        raw_response = await asyncio.wait_for(ws.recv(), timeout=10.0)
-        response = json.loads(raw_response)
-
         if DEBUG_MODE:
-            console.print(f"[dim]DEBUG WS auth response: {response}[/dim]")
-
-        if response.get("type") == "error":
-            error_msg = response.get("msg", {}).get("error", "Unknown error")
-            raise ConnectionError(f"Kalshi WS auth failed: {error_msg}")
+            console.print("[dim]DEBUG WS: Connected with auth headers.[/dim]")
 
         return ws
 
