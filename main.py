@@ -198,9 +198,8 @@ class EdgeRunner:
         if orderbook is None:
             return
 
-        # Skip if data is stale
-        if self._cache.is_orderbook_stale(update.ticker):
-            return
+        # Don't check staleness here — the update we just received from the
+        # queue IS fresh data. The stale check is for the watchdog, not the evaluator.
 
         # Skip if spread is too wide (pre-filter before spending API budget)
         if orderbook.spread is not None and orderbook.spread > Decimal("0.05"):
