@@ -110,6 +110,8 @@ class EdgeRunner:
         # Track last analyzed price and time per ticker to avoid redundant Claude calls
         self._last_analyzed_price: dict[str, Decimal] = {}
         self._last_analyzed_time: dict[str, float] = {}
+        # Cache market titles (fetched at startup)
+        self._market_titles: dict[str, str] = {}
         # Minimum price change (in dollars) before re-analyzing a market
         self._min_price_change: Decimal = Decimal("0.01")
         # Re-analyze even without price change after this many seconds
@@ -250,9 +252,10 @@ class EdgeRunner:
                 break
 
         # Call Claude with ALL available context
+        title = self._market_titles.get(update.ticker, update.ticker)
         decision = await self._analyzer.analyze_market(
             ticker=update.ticker,
-            title=update.ticker,
+            title=title,
             cache=self._cache,
             orderbook=orderbook,
             player_stats=all_stats_list[0] if all_stats_list else None,
@@ -360,6 +363,17 @@ class EdgeRunner:
 
         # Sync positions from Kalshi
         await self._order_manager.sync_positions(self._cache)
+
+        # Fetch market titles for all tracked tickers
+        for ticker in DEFAULT_TRACKED_TICKERS:
+            try:
+                market = await self._kalshi_client.get_market(ticker)
+                if market and market.get("title"):
+                    self._market_titles[ticker] = market["title"]
+                    console.print(f"[blue]  {ticker[:35]} → {market['title'][:45]}[/blue]")
+            except Exception:
+                pass
+            await asyncio.sleep(0.05)
 
         # Send startup alert
         await self._alerter.send_startup(TRADING_MODE, self._cache.get_bankroll())
