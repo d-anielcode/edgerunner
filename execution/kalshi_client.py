@@ -206,22 +206,25 @@ class KalshiClient:
         IMPORTANT: Prices must be fixed-point dollar strings ("0.6500").
         Kalshi rejects requests with float prices.
         """
-        # Format price as fixed-point 4-decimal string
-        price_str = f"{price:.4f}"
+        # Convert price from dollars (Decimal) to cents (integer)
+        # Kalshi expects price as integer cents (1-99), not dollar strings
+        price_cents = int(price * 100)
 
+        # Build order payload
+        price_field = "yes_price" if side == "yes" else "no_price"
         order_data = {
             "ticker": ticker,
             "side": side,
             "action": action,
             "count": count,
             "type": "limit",
-            "yes_price" if side == "yes" else "no_price": price_str,
+            price_field: price_cents,
             "client_order_id": str(uuid.uuid4()),
         }
 
         console.print(
             f"[green]Kalshi: Placing {action.upper()} {side.upper()} "
-            f"x{count} @ ${price_str} on {ticker} "
+            f"x{count} @ ${price:.2f} ({price_cents}c) on {ticker} "
             f"[{TRADING_MODE.upper()}][/green]"
         )
 
