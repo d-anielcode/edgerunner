@@ -271,7 +271,15 @@ class EdgeRunner:
         """
         orderbook = self._cache.get_orderbook(update.ticker)
         if orderbook is None:
+            if DEBUG_MODE:
+                console.print(f"[dim]Evaluator: {update.ticker[:30]} not in cache[/dim]")
             return
+
+        if DEBUG_MODE and orderbook.best_bid is not None:
+            console.print(
+                f"[dim]Evaluator: {update.ticker[:30]} bid=${orderbook.best_bid} "
+                f"ask=${orderbook.best_ask} spread=${orderbook.spread}[/dim]"
+            )
 
         # Don't check staleness here — the update we just received from the
         # queue IS fresh data. The stale check is for the watchdog, not the evaluator.

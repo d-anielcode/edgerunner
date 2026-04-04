@@ -55,7 +55,7 @@ class MarketPoller:
         self._tracked_tickers = tracked_tickers
         self._running: bool = False
 
-    async def _poll_market(self, ticker: str) -> None:
+    async def _poll_market_to_cache(self, ticker: str):
         """
         Fetch a single market's orderbook via REST and push to queue.
 
@@ -69,14 +69,14 @@ class MarketPoller:
                 "GET", f"/markets/{ticker}/orderbook"
             )
         except Exception:
-            return
+            return None
 
         if not orderbook_data:
-            return
+            return None
 
         ob = orderbook_data.get("orderbook_fp", orderbook_data.get("orderbook", {}))
         if not ob:
-            return
+            return None
 
         # Kalshi orderbook format:
         # "yes_dollars": [[price_str, size_str], ...] sorted LOW to HIGH
@@ -105,9 +105,9 @@ class MarketPoller:
 
         # Skip if no meaningful data
         if best_bid is None and best_ask is None:
-            return
+            return None
 
-        # Update cache (computes OFI) and push to queue
+        # Update cache (computes OFI) and return the update (don't push to queue yet)
         update = self._cache.update_orderbook(
             ticker=ticker,
             best_bid=best_bid,
@@ -116,8 +116,6 @@ class MarketPoller:
             ask_volume=ask_volume,
         )
 
-        await self._queue.put(update)
-
         if DEBUG_MODE:
             console.print(
                 f"[dim]Market poll: {ticker[:35]} "
@@ -125,24 +123,36 @@ class MarketPoller:
                 f"OFI={update.ofi:+.2f}[/dim]"
             )
 
+        return update
+
     async def _poll_cycle(self) -> None:
-        """Poll all tracked markets in sequence with small delays."""
-        updated = 0
+        """
+        Poll all tracked markets, update cache, THEN push to queue.
+
+        Two-phase approach prevents the signal evaluator from processing
+        partial data — all markets are in cache before any queue messages fire.
+        """
+        # Phase 1: Fetch all orderbooks and update cache (no queue pushes yet)
+        updates: list = []
         for ticker in self._tracked_tickers:
             try:
-                await self._poll_market(ticker)
-                updated += 1
+                update = await self._poll_market_to_cache(ticker)
+                if update is not None:
+                    updates.append(update)
             except Exception as e:
                 if DEBUG_MODE:
                     console.print(
                         f"[dim]Market poll error for {ticker[:30]}: "
                         f"{type(e).__name__}: {e}[/dim]"
                     )
-            # Small delay between requests to respect rate limits (20 reads/sec)
             await asyncio.sleep(0.1)
 
+        # Phase 2: Push ALL updates to queue at once (cache is fully populated)
+        for update in updates:
+            await self._queue.put(update)
+
         console.print(
-            f"[blue]Market Poller: {updated}/{len(self._tracked_tickers)} "
+            f"[blue]Market Poller: {len(updates)}/{len(self._tracked_tickers)} "
             f"markets updated via REST.[/blue]"
         )
 
