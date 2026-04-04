@@ -182,7 +182,7 @@ class NbaPoller:
         Returns a dict with player_id, pts, reb, ast or None on failure.
         """
         from nba_api.stats.endpoints import playercareerstats
-        from nba_api.stats.static import players
+        from nba_api.stats.static import players, teams
 
         player_list = players.find_players_by_full_name(player_name)
         if not player_list:
@@ -199,9 +199,22 @@ class NbaPoller:
 
         latest = df.iloc[-1]
         gp = int(latest.get("GP", 1)) or 1  # avoid division by zero
+
+        # Get team abbreviation from the most recent season
+        team_abbr = ""
+        team_id = latest.get("TEAM_ID")
+        if team_id:
+            try:
+                team_info = teams.find_team_name_by_id(int(team_id))
+                if team_info:
+                    team_abbr = team_info.get("abbreviation", "")
+            except Exception:
+                pass
+
         return {
             "player_id": player_id,
             "player_name": player_name,
+            "team": team_abbr,
             "pts": round(float(latest.get("PTS", 0)) / gp, 1),
             "reb": round(float(latest.get("REB", 0)) / gp, 1),
             "ast": round(float(latest.get("AST", 0)) / gp, 1),
@@ -264,13 +277,14 @@ class NbaPoller:
                 timestamp=datetime.now(UTC),
                 player_name=player_name,
                 player_id=player_id,
+                team=stats.get("team", ""),
                 season_avg_pts=stats["pts"],
                 season_avg_reb=stats["reb"],
                 season_avg_ast=stats["ast"],
                 recent_game_pts=recent_pts,
                 recent_game_reb=recent_reb,
                 recent_game_ast=recent_ast,
-                status="Active",  # BallDontLie free tier doesn't provide injury status
+                status="Active",
             )
 
             self._cache.update_player_stats(stats_update)

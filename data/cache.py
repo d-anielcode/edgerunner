@@ -76,6 +76,7 @@ class NbaStatsUpdate(QueueMsg):
     msg_type: Literal["nba_stats"] = "nba_stats"
     player_name: str
     player_id: int
+    team: str = ""  # Team abbreviation (e.g., "BOS", "LAL", "PHI")
     season_avg_pts: float = 0.0
     season_avg_reb: float = 0.0
     season_avg_ast: float = 0.0

@@ -200,6 +200,12 @@ You MUST respond using the execute_prediction_trade tool for every evaluation. N
 11. USE YOUR NBA KNOWLEDGE. You know team strengths, player caliber, home court advantage (~3 pts), and matchup dynamics. This IS sufficient data to estimate probabilities within a reasonable range.
 12. AIM TO TRADE 20-30% of markets you evaluate. If you are PASSing on everything, you are being too conservative.
 
+## ABSOLUTELY CRITICAL — DATA INTEGRITY RULES
+13. ONLY reference players that appear in the AVAILABLE PLAYER DATA section. If a player is NOT listed there, DO NOT mention them in your rationale. DO NOT invent, guess, or assume which players are on which team.
+14. If the AVAILABLE PLAYER DATA section is empty or missing, base your analysis ONLY on the market title, price, spread, and OFI. Say "limited player data available" in your rationale.
+15. NEVER assign a player to a team unless the data explicitly shows which team they play for. If unsure, do not mention specific players.
+16. Getting player-team associations WRONG leads to completely incorrect probability estimates and losing trades. When in doubt, leave players out of your analysis.
+
 ## WORKED EXAMPLES
 
 ### Example 1: Clear BUY_YES Signal
@@ -313,9 +319,11 @@ def build_market_context(
 
     # Player stats — single player (for player prop markets)
     if player_stats:
+        team_str = f" ({player_stats.team})" if player_stats.team else ""
         lines.append("")
         lines.append("## PRIMARY PLAYER")
-        lines.append(f"Player: {player_stats.player_name}")
+        lines.append(f"Player: {player_stats.player_name}{team_str}")
+        lines.append(f"Team: {player_stats.team or 'UNKNOWN'}")
         lines.append(f"Status: {player_stats.status}")
         lines.append(
             f"Season Avg: {player_stats.season_avg_pts} PTS, "
@@ -332,10 +340,12 @@ def build_market_context(
     # All available player stats (for game winner/spread markets)
     if all_player_stats:
         lines.append("")
-        lines.append("## AVAILABLE PLAYER DATA")
-        for ps in all_player_stats[:6]:  # Cap at 6 players to control token cost
+        lines.append("## AVAILABLE PLAYER DATA (ONLY use players listed here)")
+        lines.append("WARNING: Do NOT reference any player not in this list.")
+        for ps in all_player_stats[:8]:  # Cap at 8 players to control token cost
+            team_str = ps.team if ps.team else "UNKNOWN"
             lines.append(
-                f"- {ps.player_name} ({ps.status}): "
+                f"- {ps.player_name} [TEAM: {team_str}] ({ps.status}): "
                 f"{ps.season_avg_pts} PPG, {ps.season_avg_reb} RPG, {ps.season_avg_ast} APG"
             )
 
