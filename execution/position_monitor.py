@@ -53,6 +53,19 @@ BANKROLL_LOSS_THRESHOLD: float = 0.02  # 2% of bankroll loss triggers review
 # Auto profit-take (no Claude needed)
 AUTO_PROFIT_TAKE_PCT: float = 2.00  # 200% gain → auto-sell, lock it in
 
+# Quarter-aware trailing stops for player props
+# [Q1, Q2, Q3, Q4] — how much decline to allow from peak before selling
+PROP_TRAILING_STOPS = {
+    "POINTS": [0.40, 0.35, 0.30, 0.20],
+    "REBOUNDS": [0.35, 0.30, 0.25, 0.15],
+    "ASSISTS": [0.50, 0.40, 0.35, 0.25],
+    "THREES": [0.50, 0.40, 0.35, 0.25],
+    "DEFAULT": [0.40, 0.35, 0.30, 0.20],
+}
+
+# Hard price floor — never hold below this (wealth transfer zone)
+PROP_ABSOLUTE_FLOOR: Decimal = Decimal("0.10")
+
 
 class PositionMonitor:
     """
@@ -116,56 +129,130 @@ class PositionMonitor:
             return None
 
     def _is_player_prop(self, ticker: str) -> bool:
-        """
-        Check if a ticker is a player prop market.
-
-        Player props (points, rebounds, assists, 3PT, blocks, steals) are
-        highly volatile during games. Stop-losses don't work — hold to expiration.
-        Only game winners and spreads should use trailing stops.
-        """
+        """Check if a ticker is a player prop market."""
         ticker_upper = ticker.upper()
         prop_prefixes = ["KXNBAPTS", "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBABLK", "KXNBASTL", "KXNBA2D"]
         return any(ticker_upper.startswith(prefix) for prefix in prop_prefixes)
+
+    def _get_prop_type(self, ticker: str) -> str:
+        """Get the prop type for quarter-aware stop-loss lookup."""
+        ticker_upper = ticker.upper()
+        if "KXNBAPTS" in ticker_upper:
+            return "POINTS"
+        elif "KXNBAREB" in ticker_upper:
+            return "REBOUNDS"
+        elif "KXNBAAST" in ticker_upper:
+            return "ASSISTS"
+        elif "KXNBA3PT" in ticker_upper:
+            return "THREES"
+        return "DEFAULT"
+
+    async def _evaluate_player_prop(self, position: Position, current_quarter: int | None) -> dict:
+        """
+        Evaluate a player prop position using quarter-aware trailing stops.
+
+        Uses ESPN game clock data to determine the current quarter,
+        then applies progressively tighter stop-losses as the game progresses.
+
+        Q1: Wide tolerance (40% decline OK — normal variance)
+        Q4: Tight tolerance (20% decline = sell — time is running out)
+
+        Also enforces a hard floor at $0.10 — never hold below this.
+        """
+        current_price = await self._get_current_price(
+            position.kalshi_ticker, position.side
+        )
+        if current_price is None:
+            return {
+                "action": "hold", "current_price": None,
+                "unrealized_pnl": Decimal("0"), "pnl_pct": 0.0,
+                "reason": "Player prop: no price data.",
+            }
+
+        entry_price = position.avg_price
+        pnl_per_contract = current_price - entry_price
+        unrealized_pnl = pnl_per_contract * position.quantity
+        pnl_pct = float(pnl_per_contract / entry_price) if entry_price > 0 else 0.0
+
+        # Update peak price
+        ticker = position.kalshi_ticker
+        async with self._peak_lock:
+            prev_peak = self._peak_prices.get(ticker, entry_price)
+            if current_price > prev_peak:
+                self._peak_prices[ticker] = current_price
+            peak_price = self._peak_prices.get(ticker, entry_price)
+
+        drop_from_peak = float((peak_price - current_price) / peak_price) if peak_price > 0 else 0.0
+
+        # RULE 1: Auto profit-take at 300%
+        if pnl_pct >= 3.00:
+            return {
+                "action": "sell", "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
+                "reason": f"Prop auto-take: up {pnl_pct:+.0%}.",
+            }
+
+        # RULE 2: Hard floor — never hold below $0.10
+        if current_price <= PROP_ABSOLUTE_FLOOR:
+            return {
+                "action": "sell", "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
+                "reason": f"Prop hard floor: price ${current_price} <= ${PROP_ABSOLUTE_FLOOR}. Exiting wealth-transfer zone.",
+            }
+
+        # RULE 3: Quarter-aware trailing stop
+        if current_quarter is not None and current_quarter >= 1:
+            prop_type = self._get_prop_type(ticker)
+            stops = PROP_TRAILING_STOPS.get(prop_type, PROP_TRAILING_STOPS["DEFAULT"])
+            q_index = min(current_quarter - 1, 3)  # Clamp to Q4 for OT
+            max_decline = stops[q_index]
+
+            if drop_from_peak >= max_decline:
+                return {
+                    "action": "sell", "current_price": current_price,
+                    "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
+                    "reason": (
+                        f"Prop Q{current_quarter} stop: {drop_from_peak:.0%} decline from peak "
+                        f"${peak_price} (max {max_decline:.0%} in Q{current_quarter}). "
+                        f"Type: {prop_type}."
+                    ),
+                }
+
+        # RULE 4: No quarter data — use fallback (wider stop)
+        elif drop_from_peak >= 0.50:
+            return {
+                "action": "sell", "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
+                "reason": f"Prop fallback stop: {drop_from_peak:.0%} decline (no game clock data).",
+            }
+
+        # ALL CLEAR — HOLD
+        q_str = f"Q{current_quarter}" if current_quarter else "pre-game"
+        peak_info = f" | Peak=${peak_price}" if peak_price > entry_price else ""
+        return {
+            "action": "hold", "current_price": current_price,
+            "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
+            "reason": f"Prop hold ({q_str}). P&L: {pnl_pct:+.0%} (${unrealized_pnl:+.2f}){peak_info}",
+        }
 
     async def _evaluate_position(self, position: Position) -> dict:
         """
         Evaluate whether a position should be held or exited.
 
-        TWO MODES:
-        - Game winners/spreads: Full trailing stop-loss system
-        - Player props: Hold to expiration (too volatile for stops, only auto-take at 200%+)
+        THREE MODES:
+        - Player props: Quarter-aware trailing stops (tight in Q4, wide in Q1)
+        - Game winners/spreads: Standard trailing stop (25% from peak)
+        - Both: Hard floor at $0.10, auto-take at 200-300%
 
         Returns a dict with action, current_price, unrealized_pnl, pnl_pct, reason.
         """
-        # Player props: hold to expiration (no stop-loss, only extreme profit-take)
+        # Player props: use quarter-aware stops with ESPN game clock
         if self._is_player_prop(position.kalshi_ticker):
-            current_price = await self._get_current_price(
-                position.kalshi_ticker, position.side
-            )
-            if current_price is None:
-                return {
-                    "action": "hold", "current_price": None,
-                    "unrealized_pnl": Decimal("0"), "pnl_pct": 0.0,
-                    "reason": "Player prop: hold to expiration (no price data).",
-                }
-
-            pnl_per_contract = current_price - position.avg_price
-            unrealized_pnl = pnl_per_contract * position.quantity
-            pnl_pct = float(pnl_per_contract / position.avg_price) if position.avg_price > 0 else 0.0
-
-            # Only auto-take at 300%+ for player props (they can swing back)
-            if pnl_pct >= 3.00:
-                return {
-                    "action": "sell", "current_price": current_price,
-                    "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
-                    "reason": f"Player prop auto-take: up {pnl_pct:+.0%}. Locking in profit.",
-                }
-
-            return {
-                "action": "hold", "current_price": current_price,
-                "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
-                "reason": f"Player prop: hold to expiration. P&L: {pnl_pct:+.0%} (${unrealized_pnl:+.2f})",
-            }
+            # Fetch current quarter from ESPN
+            from data.espn_scores import fetch_live_scores, get_quarter_from_game
+            game_states = await fetch_live_scores()
+            current_quarter = get_quarter_from_game(game_states, position.kalshi_ticker)
+            return await self._evaluate_player_prop(position, current_quarter)
 
         # Game winners/spreads: full trailing stop-loss system
         current_price = await self._get_current_price(
@@ -439,7 +526,7 @@ Respond with EXACTLY one word: SELL or HOLD"""
         Unfilled orders tie up capital and clutter the portfolio.
         If the price moved away from our limit, the edge is gone anyway.
         """
-        max_resting_seconds = 600  # 10 minutes
+        max_resting_seconds = 30  # 30 seconds — stale orders get picked off by informed flow
 
         try:
             orders = await self._kalshi.get_orders(status="resting")

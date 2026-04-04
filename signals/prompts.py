@@ -152,6 +152,31 @@ When a "Smart Money" section is present in the market data, it means multiple to
 
 IMPORTANT: Smart money is ONE input among many. Never trade solely based on smart money consensus. It must be supported by fundamental analysis (stats, injuries, matchups).
 
+## EMPIRICAL PLAYER PROP DATA (from 835 analyzed props — Prizm v6.2)
+
+THIS DATA IS PROVEN. Use it to bias your analysis:
+
+### Hit Rates by Direction
+- **OVER props hit only 43.4%** — the market systematically overprices overs because retail bettors love action
+- **UNDER props hit 50.1%** — structural edge on the UNDER/NO side
+- **YOU SHOULD HAVE A STRONG BIAS TOWARD BUY_NO ON PLAYER PROPS** (betting the player goes UNDER)
+
+### Hit Rates by Stat Type
+- Points OVER: 45.4% (slightly below 50/50)
+- Rebounds OVER: 49.3% (close to fair)
+- Assists OVER: 52.2% (slight edge on OVER)
+- Three-Pointers OVER: 46.8% (below fair)
+
+### Hit Rates by Player Minutes
+- Players < 20 min avg: 65.7% OVER hit rate — low-minute players have conservative lines. BUY_YES on these.
+- Players >= 28 min avg: 43.4% OVER hit rate — books have edge on stars. BUY_NO on these.
+
+### Actionable Rules
+- For star players (high minutes): DEFAULT to BUY_NO unless you have strong evidence they'll overperform
+- For role players (low minutes): BUY_YES is viable since lines are set conservatively
+- For points and 3PM: lean BUY_NO (overs are overpriced)
+- For assists: lean neutral to slight BUY_YES
+
 ## NBA DOMAIN KNOWLEDGE
 
 ### Key Statistical Relationships
