@@ -82,12 +82,15 @@ DEFAULT_TRACKED_TICKERS: list[str] = [
 
 # Tracked NBA players for stats polling
 DEFAULT_TRACKED_PLAYERS: list[dict] = [
-    # Key players from tonight's games
-    {"name": "Trae Young"},      # ATL
-    {"name": "Cam Thomas"},      # BKN
-    {"name": "Zach LaVine"},     # CHI
-    {"name": "Jalen Brunson"},   # NYK
+    # ORL at DAL
+    {"name": "Franz Wagner"},     # ORL
+    {"name": "Klay Thompson"},    # DAL
+    # NOP at SAC
+    {"name": "Zion Williamson"},  # NOP
+    {"name": "Trey Murphy III"}, # NOP
     {"name": "De'Aaron Fox"},    # SAC
+    # UTA at HOU
+    {"name": "Jalen Green"},     # HOU
 ]
 
 
