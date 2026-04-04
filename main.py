@@ -478,15 +478,26 @@ class EdgeRunner:
                 if game:
                     if game.status == "Final":
                         return None  # Game already ended
-                    if game.quarter >= 4:
-                        mins_left = parse_clock_minutes(game.clock)
-                        if mins_left < 2.0:
-                            if DEBUG_MODE:
-                                console.print(
-                                    f"[dim]Skipped {update.ticker[:30]}: Q{game.quarter} {game.clock} "
-                                    f"(< 2 min left)[/dim]"
-                                )
-                            return None
+                    # Block trades when game is almost over:
+                    # - Q4 with < 2 min AND score difference > 5 (no OT likely)
+                    # - Any OT period (Q5+) with < 1 min left
+                    # - Game status indicates it's wrapping up
+                    mins_left = parse_clock_minutes(game.clock)
+                    score_diff = abs(game.home_score - game.away_score)
+
+                    should_skip = False
+                    if game.quarter == 4 and mins_left < 2.0 and score_diff > 5:
+                        should_skip = True  # Q4, < 2 min, not close — game is decided
+                    elif game.quarter >= 5 and mins_left < 1.0:
+                        should_skip = True  # OT with < 1 min — truly ending
+
+                    if should_skip:
+                        if DEBUG_MODE:
+                            console.print(
+                                f"[dim]Skipped {update.ticker[:30]}: Q{game.quarter} {game.clock} "
+                                f"diff={score_diff} (game ending)[/dim]"
+                            )
+                        return None
 
         # Skip if spread is too wide
         if orderbook.spread is not None and orderbook.spread > Decimal("0.05"):
