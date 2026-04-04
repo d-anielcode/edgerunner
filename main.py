@@ -19,6 +19,7 @@ The agent runs until stopped with Ctrl+C. On shutdown, it:
 """
 
 import asyncio
+import os
 import signal
 import sys
 import time
@@ -477,12 +478,43 @@ class EdgeRunner:
                 self._signal_evaluator(),
                 self._position_monitor.run(),
                 self._watchdog(),
+                self._auto_shutdown_timer(),
                 return_exceptions=True,
             )
         except asyncio.CancelledError:
             pass
         finally:
             await self._shutdown()
+
+    async def _auto_shutdown_timer(self) -> None:
+        """
+        Auto-shutdown at a configured time (default: 10 PM local time).
+
+        Checks every 60 seconds if the current time has passed the
+        shutdown hour. When triggered, initiates graceful shutdown.
+        """
+        shutdown_hour = int(os.getenv("AUTO_SHUTDOWN_HOUR", "22"))  # 10 PM
+
+        console.print(
+            f"[blue]Auto-shutdown: Will stop at {shutdown_hour}:00 local time.[/blue]"
+        )
+
+        while self._running:
+            await asyncio.sleep(60)
+
+            now = datetime.now()
+            if now.hour >= shutdown_hour:
+                console.print(
+                    f"[yellow]Auto-shutdown: {shutdown_hour}:00 reached. "
+                    f"Stopping agent...[/yellow]"
+                )
+                self._running = False
+
+                # Cancel all tasks
+                for task in asyncio.all_tasks():
+                    if task is not asyncio.current_task():
+                        task.cancel()
+                return
 
 
 def main() -> None:
