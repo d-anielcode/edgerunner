@@ -477,6 +477,7 @@ class EdgeRunner:
 
         discovered_tickers: list[str] = []
         discovered_titles: dict[str, str] = {}
+        latest_game_end: datetime | None = None
 
         # Search for NBA markets across all event types
         for prefix in ["KXNBAGAME", "KXNBASPREAD", "KXNBAPTS"]:
@@ -500,12 +501,25 @@ class EdgeRunner:
                                 discovered_tickers.append(ticker)
                                 discovered_titles[ticker] = title
 
+                            # Track the latest game end time for auto-shutdown
+                            exp_time = m.get("expected_expiration_time", m.get("close_time"))
+                            if exp_time:
+                                try:
+                                    exp_dt = datetime.fromisoformat(exp_time.replace("Z", "+00:00"))
+                                    if latest_game_end is None or exp_dt > latest_game_end:
+                                        latest_game_end = exp_dt
+                                except (ValueError, TypeError):
+                                    pass
+
                     cursor = result.get("cursor")
                     if not cursor or not markets:
                         break
                 except Exception:
                     break
                 await asyncio.sleep(0.1)
+
+        # Store latest game end time for auto-shutdown
+        self._latest_game_end = latest_game_end
 
         # Update global lists
         DEFAULT_TRACKED_TICKERS.clear()
@@ -530,10 +544,19 @@ class EdgeRunner:
         DEFAULT_TRACKED_PLAYERS.extend({"name": name} for name in player_names)
         self._nba_poller._tracked_players = DEFAULT_TRACKED_PLAYERS
 
-        console.print(
-            f"[green]Discovered: {len(discovered_tickers)} NBA markets, "
-            f"{len(player_names)} players[/green]"
-        )
+        # Display latest game end time
+        if latest_game_end:
+            local_end = latest_game_end.astimezone()
+            console.print(
+                f"[green]Discovered: {len(discovered_tickers)} NBA markets, "
+                f"{len(player_names)} players | "
+                f"Last game ends ~{local_end.strftime('%I:%M %p')}[/green]"
+            )
+        else:
+            console.print(
+                f"[green]Discovered: {len(discovered_tickers)} NBA markets, "
+                f"{len(player_names)} players[/green]"
+            )
 
         # Print summary by game
         games: dict[str, int] = {}
@@ -647,23 +670,36 @@ class EdgeRunner:
 
     async def _auto_shutdown_timer(self) -> None:
         """
-        Auto-shutdown when all tracked markets have closed/resolved.
+        Auto-shutdown when all games have ended.
 
-        Checks every 2 minutes:
-        1. Are there any open markets left in our tracked tickers?
-        2. Do we have any open positions still being monitored?
-        3. If both are empty, wait 5 more minutes (grace period) then shutdown.
+        Uses the latest game expiration time from Kalshi's market data
+        (discovered at startup). Adds a 30-minute buffer after the last
+        game's expected end time, then checks for open positions.
 
-        Also has a hard cutoff (AUTO_SHUTDOWN_HOUR, default 11 PM) as a safety net.
+        Also has a hard cutoff (AUTO_SHUTDOWN_HOUR, default 11 PM) as safety net.
         """
-        hard_cutoff_hour = int(os.getenv("AUTO_SHUTDOWN_HOUR", "23"))  # 11 PM safety net
+        hard_cutoff_hour = int(os.getenv("AUTO_SHUTDOWN_HOUR", "23"))
         no_activity_since: float | None = None
-        grace_period = 300.0  # 5 minutes of no activity before shutdown
+        grace_period = 300.0  # 5 minutes after last game ends
 
-        console.print(
-            f"[blue]Auto-shutdown: Will stop when all games end "
-            f"(hard cutoff: {hard_cutoff_hour}:00).[/blue]"
-        )
+        # Calculate shutdown target from discovered game times
+        game_end = getattr(self, "_latest_game_end", None)
+        if game_end:
+            # Add 30 min buffer (games can go to OT, markets settle after final buzzer)
+            from datetime import timedelta
+            shutdown_target = game_end + timedelta(minutes=30)
+            local_target = shutdown_target.astimezone()
+            console.print(
+                f"[blue]Auto-shutdown: Last game ends ~{game_end.astimezone().strftime('%I:%M %p')}. "
+                f"Agent will shut down ~{local_target.strftime('%I:%M %p')} "
+                f"(30 min buffer). Hard cutoff: {hard_cutoff_hour}:00.[/blue]"
+            )
+        else:
+            shutdown_target = None
+            console.print(
+                f"[blue]Auto-shutdown: No game times found. "
+                f"Hard cutoff: {hard_cutoff_hour}:00.[/blue]"
+            )
 
         # Wait at least 10 minutes before checking (let markets populate)
         await asyncio.sleep(600)
@@ -671,14 +707,30 @@ class EdgeRunner:
         while self._running:
             await asyncio.sleep(120)  # Check every 2 minutes
 
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
             # Hard cutoff safety net
-            if now.hour >= hard_cutoff_hour:
+            if datetime.now().hour >= hard_cutoff_hour:
                 console.print(
                     f"[yellow]Auto-shutdown: Hard cutoff {hard_cutoff_hour}:00 reached.[/yellow]"
                 )
                 break
+
+            # Check if we've passed the last game's end time + buffer
+            if shutdown_target and now >= shutdown_target:
+                has_open_positions = self._cache.get_position_count() > 0
+                if has_open_positions:
+                    console.print(
+                        "[yellow]Auto-shutdown: Past game end time but "
+                        f"{self._cache.get_position_count()} positions still open. Waiting...[/yellow]"
+                    )
+                    continue
+                else:
+                    console.print(
+                        "[yellow]Auto-shutdown: All games ended and no open positions. "
+                        "Shutting down...[/yellow]"
+                    )
+                    break
 
             # Check if any tracked markets still have activity
             has_active_markets = False
