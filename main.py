@@ -31,6 +31,7 @@ from rich.console import Console
 from alerts.discord import DiscordAlerter
 from config.settings import (
     DEBUG_MODE,
+    MAX_POSITION_PCT,
     ORDERBOOK_STALE_THRESHOLD,
     TRADING_MODE,
     console as settings_console,
@@ -517,7 +518,7 @@ class EdgeRunner:
             )
             return
 
-        # Duplicate exposure check
+        # Duplicate exposure check — allows scaling in if edge is bigger
         game_id = _extract_game_id(decision.target_market_id)
         if game_id:
             bet_direction = _get_game_outcome_direction(decision.target_market_id, decision.action)
@@ -530,11 +531,30 @@ class EdgeRunner:
                         pos_ticker, "BUY_YES" if pos.side == "yes" else "BUY_NO"
                     )
                     if pos_direction == bet_direction:
-                        console.print(
-                            f"[yellow]BLOCKED: Already exposed to {bet_direction} "
-                            f"on game {game_id}.[/yellow]"
-                        )
-                        return
+                        # Same direction on same game — check if we should scale in
+                        # Only allow if: same ticker AND edge > 5% AND total exposure under MAX_POSITION_PCT
+                        if pos_ticker == decision.target_market_id and decision.edge >= 0.05:
+                            current_exposure = float(pos.avg_price * pos.quantity)
+                            max_exposure = float(self._starting_bankroll * Decimal(str(MAX_POSITION_PCT)))
+                            if current_exposure < max_exposure:
+                                console.print(
+                                    f"[green]SCALING IN: Adding to {pos_ticker} "
+                                    f"(edge={decision.edge:.1%}, current exposure=${current_exposure:.2f}, "
+                                    f"max=${max_exposure:.2f})[/green]"
+                                )
+                                # Allow — fall through to execution
+                            else:
+                                console.print(
+                                    f"[yellow]BLOCKED: Max exposure reached on {pos_ticker} "
+                                    f"(${current_exposure:.2f} >= ${max_exposure:.2f})[/yellow]"
+                                )
+                                return
+                        else:
+                            console.print(
+                                f"[yellow]BLOCKED: Already exposed to {bet_direction} "
+                                f"on game {game_id} via {pos_ticker}.[/yellow]"
+                            )
+                            return
 
         # Execute
         orderbook = self._cache.get_orderbook(decision.target_market_id)
