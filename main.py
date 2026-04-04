@@ -167,6 +167,8 @@ class EdgeRunner:
         # Shutdown reason (set by auto-shutdown or Ctrl+C)
         self._shutdown_reason: str = "Unknown"
         self._running: bool = False
+        # Live game states from ESPN (updated every 30s by watchdog)
+        self._live_game_states: dict = {}
         # Track last analyzed price and time per ticker to avoid redundant Claude calls
         self._last_analyzed_price: dict[str, Decimal] = {}
         self._last_analyzed_time: dict[str, float] = {}
@@ -453,6 +455,29 @@ class EdgeRunner:
         if orderbook is None or orderbook.best_bid is None:
             return None
 
+        # Skip markets where the game is almost over (< 2 min left in Q4)
+        # No point placing new trades on a game that's about to resolve
+        game_states = self._live_game_states
+        if game_states:
+            from data.espn_scores import get_quarter_from_game, parse_clock_minutes
+            import re
+            match = re.search(r"KXNBA\w*-\d{2}[A-Z]{3}\d{2}([A-Z]{6})", update.ticker.upper())
+            if match:
+                game_id = match.group(1)
+                game = game_states.get(game_id)
+                if game:
+                    if game.status == "Final":
+                        return None  # Game already ended
+                    if game.quarter >= 4:
+                        mins_left = parse_clock_minutes(game.clock)
+                        if mins_left < 2.0:
+                            if DEBUG_MODE:
+                                console.print(
+                                    f"[dim]Skipped {update.ticker[:30]}: Q{game.quarter} {game.clock} "
+                                    f"(< 2 min left)[/dim]"
+                                )
+                            return None
+
         # Skip if spread is too wide
         if orderbook.spread is not None and orderbook.spread > Decimal("0.05"):
             return None
@@ -644,6 +669,13 @@ class EdgeRunner:
 
         while self._running:
             await asyncio.sleep(WATCHDOG_INTERVAL)
+
+            # Refresh ESPN game states (free, no auth, powers quarter-aware stops)
+            try:
+                from data.espn_scores import fetch_live_scores
+                self._live_game_states = await fetch_live_scores()
+            except Exception:
+                pass
 
             try:
                 # Check for stale orderbook data
