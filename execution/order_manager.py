@@ -194,6 +194,14 @@ class OrderManager:
             if isinstance(avg_price, int) and avg_price > 1:
                 avg_price = avg_price / 100
 
+            # Skip positions with invalid prices (settled or empty positions)
+            if not avg_price or float(avg_price) < 0.01 or float(avg_price) > 0.99:
+                continue
+
+            # Skip positions with zero quantity
+            if not quantity or float(quantity) <= 0:
+                continue
+
             position = Position(
                 kalshi_ticker=ticker,
                 side=pos_data.get("side", "yes"),

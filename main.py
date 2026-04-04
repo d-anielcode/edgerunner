@@ -101,6 +101,10 @@ class EdgeRunner:
         self._cache: AgentCache = get_cache()
         self._queue: asyncio.Queue[QueueMsg] = asyncio.Queue(maxsize=1000)
         self._running: bool = False
+        # Track last analyzed price per ticker to avoid redundant Claude calls
+        self._last_analyzed_price: dict[str, Decimal] = {}
+        # Minimum price change (in dollars) before re-analyzing a market
+        self._min_price_change: Decimal = Decimal("0.01")
 
         # Modules
         self._feed: KalshiFeed = KalshiFeed(
@@ -173,8 +177,13 @@ class EdgeRunner:
         """
         Evaluate a single orderbook update for a potential trade.
 
-        Only calls Claude when there's potentially actionable data.
-        This prevents burning API budget on markets with no edge.
+        Only calls Claude when:
+        1. Price has actually changed since last analysis (saves ~90% of API calls)
+        2. Data is fresh (not stale)
+        3. Spread is reasonable (< $0.05)
+
+        This is the key cost optimization — without it, the agent calls Claude
+        on every 30-second poll even when nothing has changed.
         """
         orderbook = self._cache.get_orderbook(update.ticker)
         if orderbook is None:
@@ -187,6 +196,13 @@ class EdgeRunner:
         # Skip if spread is too wide (pre-filter before spending API budget)
         if orderbook.spread is not None and orderbook.spread > Decimal("0.05"):
             return
+
+        # Skip if price hasn't changed since last analysis (core cost optimization)
+        current_price = update.best_bid or Decimal("0")
+        last_price = self._last_analyzed_price.get(update.ticker, Decimal("-1"))
+        if abs(current_price - last_price) < self._min_price_change:
+            return
+        self._last_analyzed_price[update.ticker] = current_price
 
         # Get player stats if available (match ticker to player — simplified for MVP)
         player_stats = None

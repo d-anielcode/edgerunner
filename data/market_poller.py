@@ -25,8 +25,8 @@ from execution.kalshi_client import KalshiClient
 console = Console()
 UTC = timezone.utc
 
-# Poll interval in seconds
-MARKET_POLL_INTERVAL: float = 30.0
+# Poll interval in seconds (60s balances freshness vs API rate limits)
+MARKET_POLL_INTERVAL: float = 60.0
 
 
 class MarketPoller:
