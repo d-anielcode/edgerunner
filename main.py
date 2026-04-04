@@ -647,33 +647,74 @@ class EdgeRunner:
 
     async def _auto_shutdown_timer(self) -> None:
         """
-        Auto-shutdown at a configured time (default: 10 PM local time).
+        Auto-shutdown when all tracked markets have closed/resolved.
 
-        Checks every 60 seconds if the current time has passed the
-        shutdown hour. When triggered, initiates graceful shutdown.
+        Checks every 2 minutes:
+        1. Are there any open markets left in our tracked tickers?
+        2. Do we have any open positions still being monitored?
+        3. If both are empty, wait 5 more minutes (grace period) then shutdown.
+
+        Also has a hard cutoff (AUTO_SHUTDOWN_HOUR, default 11 PM) as a safety net.
         """
-        shutdown_hour = int(os.getenv("AUTO_SHUTDOWN_HOUR", "22"))  # 10 PM
+        hard_cutoff_hour = int(os.getenv("AUTO_SHUTDOWN_HOUR", "23"))  # 11 PM safety net
+        no_activity_since: float | None = None
+        grace_period = 300.0  # 5 minutes of no activity before shutdown
 
         console.print(
-            f"[blue]Auto-shutdown: Will stop at {shutdown_hour}:00 local time.[/blue]"
+            f"[blue]Auto-shutdown: Will stop when all games end "
+            f"(hard cutoff: {hard_cutoff_hour}:00).[/blue]"
         )
 
+        # Wait at least 10 minutes before checking (let markets populate)
+        await asyncio.sleep(600)
+
         while self._running:
-            await asyncio.sleep(60)
+            await asyncio.sleep(120)  # Check every 2 minutes
 
             now = datetime.now()
-            if now.hour >= shutdown_hour:
-                console.print(
-                    f"[yellow]Auto-shutdown: {shutdown_hour}:00 reached. "
-                    f"Stopping agent...[/yellow]"
-                )
-                self._running = False
 
-                # Cancel all tasks
-                for task in asyncio.all_tasks():
-                    if task is not asyncio.current_task():
-                        task.cancel()
-                return
+            # Hard cutoff safety net
+            if now.hour >= hard_cutoff_hour:
+                console.print(
+                    f"[yellow]Auto-shutdown: Hard cutoff {hard_cutoff_hour}:00 reached.[/yellow]"
+                )
+                break
+
+            # Check if any tracked markets still have activity
+            has_active_markets = False
+            for ticker in DEFAULT_TRACKED_TICKERS:
+                ob = self._cache.get_orderbook(ticker)
+                if ob and ob.best_bid is not None and not self._cache.is_orderbook_stale(ticker):
+                    # Market still has live data flowing
+                    has_active_markets = True
+                    break
+
+            has_open_positions = self._cache.get_position_count() > 0
+
+            if has_active_markets or has_open_positions:
+                no_activity_since = None  # Reset timer
+                continue
+
+            # No active markets AND no open positions
+            if no_activity_since is None:
+                no_activity_since = time.monotonic()
+                console.print(
+                    "[yellow]Auto-shutdown: No active markets or positions. "
+                    f"Grace period: {grace_period/60:.0f} minutes...[/yellow]"
+                )
+            elif time.monotonic() - no_activity_since >= grace_period:
+                console.print(
+                    "[yellow]Auto-shutdown: All games appear to have ended. "
+                    "Shutting down...[/yellow]"
+                )
+                break
+
+        # Trigger shutdown
+        self._running = False
+        for task in asyncio.all_tasks():
+            if task is not asyncio.current_task():
+                task.cancel()
+        return
 
 
 def main() -> None:
