@@ -257,6 +257,25 @@ class KalshiClient:
             console.print(f"[red]Kalshi cancel failed: {e}[/red]")
             return None
 
+    async def get_orders(self, status: str = "resting") -> list[dict]:
+        """
+        Fetch orders by status (resting, pending, executed, canceled).
+
+        'resting' = open limit orders that haven't filled yet.
+        """
+        try:
+            result = await self._request_with_retry("GET", f"/portfolio/orders?status={status}")
+            orders = result.get("orders", [])
+            if DEBUG_MODE:
+                console.print(f"[dim]Kalshi orders ({status}): {len(orders)} found[/dim]")
+            return orders
+        except KalshiApiError as e:
+            console.print(f"[red]Kalshi orders fetch failed: {e}[/red]")
+            return []
+        except Exception as e:
+            console.print(f"[red]Kalshi orders error: {type(e).__name__}: {e}[/red]")
+            return []
+
     # --- Read Operations ---
 
     async def get_balance(self) -> Decimal | None:

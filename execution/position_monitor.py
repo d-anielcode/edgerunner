@@ -406,9 +406,9 @@ Respond with EXACTLY one word: SELL or HOLD"""
 
     async def _check_cycle(self) -> None:
         """
-        One monitoring cycle: check open positions and re-entry opportunities.
+        One monitoring cycle: check positions, resting orders, and re-entry.
         """
-        # Check open positions for stop-loss / profit-take
+        # 1. Check open positions for stop-loss / profit-take
         positions = self._cache.get_positions()
         for ticker, position in positions.items():
             evaluation = await self._evaluate_position(position)
@@ -426,8 +426,59 @@ Respond with EXACTLY one word: SELL or HOLD"""
 
             await asyncio.sleep(0.5)
 
-        # Check exited positions for re-entry opportunities
+        # 2. Cancel stale resting orders (unfilled limit orders older than 10 min)
+        await self._cleanup_resting_orders()
+
+        # 3. Check exited positions for re-entry opportunities
         await self._check_reentry_opportunities()
+
+    async def _cleanup_resting_orders(self) -> None:
+        """
+        Cancel resting limit orders that haven't filled within 10 minutes.
+
+        Unfilled orders tie up capital and clutter the portfolio.
+        If the price moved away from our limit, the edge is gone anyway.
+        """
+        max_resting_seconds = 600  # 10 minutes
+
+        try:
+            orders = await self._kalshi.get_orders(status="resting")
+        except Exception:
+            return
+
+        if not orders:
+            return
+
+        now_ms = int(time.time() * 1000)
+
+        canceled = 0
+        for order in orders:
+            order_id = order.get("order_id", "")
+            created = order.get("created_time", "")
+            ticker = order.get("ticker", "?")
+
+            if not order_id or not created:
+                continue
+
+            # Parse creation time — Kalshi returns ISO format
+            try:
+                from datetime import datetime as dt
+                created_dt = dt.fromisoformat(created.replace("Z", "+00:00"))
+                age_seconds = (dt.now(timezone.utc) - created_dt).total_seconds()
+            except (ValueError, TypeError):
+                continue
+
+            if age_seconds > max_resting_seconds:
+                console.print(
+                    f"[yellow]Canceling stale order: {ticker[:30]} "
+                    f"(resting {age_seconds/60:.0f} min)[/yellow]"
+                )
+                await self._kalshi.cancel_order(order_id)
+                canceled += 1
+                await asyncio.sleep(0.2)
+
+        if canceled > 0:
+            console.print(f"[yellow]Cleaned up {canceled} stale resting orders.[/yellow]")
 
     async def _check_reentry_opportunities(self) -> None:
         """
