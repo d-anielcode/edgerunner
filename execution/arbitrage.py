@@ -26,11 +26,17 @@ from execution.kalshi_client import KalshiClient
 console = Console()
 
 # Minimum profit per contract to trigger (after fees)
-# Kalshi fee at $0.50 is ~$0.02 per side, so we need > $0.04 spread to profit
-MIN_ARB_PROFIT: Decimal = Decimal("0.04")
+# Must be worth it — a few cents isn't worth tying up capital
+MIN_ARB_PROFIT: Decimal = Decimal("0.08")
 
-# Maximum contracts to buy per arb (limit exposure)
-MAX_ARB_CONTRACTS: int = 10
+# Maximum contracts to buy per arb
+MAX_ARB_CONTRACTS: int = 5
+
+# Maximum total capital to spend on arb (% of bankroll)
+MAX_ARB_BANKROLL_PCT: float = 0.10  # Never spend more than 10% of bankroll on arbs
+
+# Minimum total profit to bother executing
+MIN_TOTAL_PROFIT: Decimal = Decimal("0.50")  # Don't arb for less than 50 cents total
 
 
 class ArbitrageScanner:
@@ -50,10 +56,12 @@ class ArbitrageScanner:
         self,
         kalshi_client: KalshiClient,
         alerter: object,
+        cache: object | None = None,
         tracked_tickers: list[str] | None = None,
     ) -> None:
         self._kalshi = kalshi_client
         self._alerter = alerter
+        self._cache = cache
         self._tracked_tickers = tracked_tickers or []
         self._running: bool = False
         self._total_arbs: int = 0
@@ -135,8 +143,21 @@ class ArbitrageScanner:
                 vol_b = int(float(no_b[-1][1])) if no_b else 0
                 max_contracts = min(vol_a, vol_b, MAX_ARB_CONTRACTS)
 
+                # Cap by bankroll — never spend more than 10% on arbs
+                if self._cache:
+                    bankroll = self._cache.get_bankroll()
+                    max_arb_spend = bankroll * Decimal(str(MAX_ARB_BANKROLL_PCT))
+                    cost_per = total_cost
+                    if cost_per > 0:
+                        max_by_bankroll = int(max_arb_spend / cost_per)
+                        max_contracts = min(max_contracts, max_by_bankroll)
+
                 if max_contracts < 1:
                     return None
+
+                total_profit = net_profit * max_contracts
+                if total_profit < MIN_TOTAL_PROFIT:
+                    return None  # Not worth it for less than 50 cents
 
                 return {
                     "ticker_a": ticker_a,

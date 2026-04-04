@@ -214,6 +214,7 @@ class EdgeRunner:
         self._arb_scanner: ArbitrageScanner = ArbitrageScanner(
             kalshi_client=self._kalshi_client,
             alerter=self._alerter,
+            cache=self._cache,
         )
 
     async def _signal_evaluator(self) -> None:
