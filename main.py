@@ -101,10 +101,13 @@ class EdgeRunner:
         self._cache: AgentCache = get_cache()
         self._queue: asyncio.Queue[QueueMsg] = asyncio.Queue(maxsize=1000)
         self._running: bool = False
-        # Track last analyzed price per ticker to avoid redundant Claude calls
+        # Track last analyzed price and time per ticker to avoid redundant Claude calls
         self._last_analyzed_price: dict[str, Decimal] = {}
+        self._last_analyzed_time: dict[str, float] = {}
         # Minimum price change (in dollars) before re-analyzing a market
         self._min_price_change: Decimal = Decimal("0.01")
+        # Re-analyze even without price change after this many seconds
+        self._max_stale_analysis: float = 300.0  # 5 minutes
 
         # Modules
         self._feed: KalshiFeed = KalshiFeed(
@@ -197,12 +200,20 @@ class EdgeRunner:
         if orderbook.spread is not None and orderbook.spread > Decimal("0.05"):
             return
 
-        # Skip if price hasn't changed since last analysis (core cost optimization)
+        # Skip if price hasn't changed AND analysis is recent (cost optimization)
         current_price = update.best_bid or Decimal("0")
         last_price = self._last_analyzed_price.get(update.ticker, Decimal("-1"))
-        if abs(current_price - last_price) < self._min_price_change:
+        last_time = self._last_analyzed_time.get(update.ticker, 0.0)
+        time_since = time.monotonic() - last_time
+
+        price_changed = abs(current_price - last_price) >= self._min_price_change
+        analysis_stale = time_since >= self._max_stale_analysis
+
+        if not price_changed and not analysis_stale:
             return
+
         self._last_analyzed_price[update.ticker] = current_price
+        self._last_analyzed_time[update.ticker] = time.monotonic()
 
         # Get player stats if available (match ticker to player — simplified for MVP)
         player_stats = None

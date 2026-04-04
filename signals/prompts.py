@@ -183,6 +183,9 @@ You MUST respond using the execute_prediction_trade tool for every evaluation. N
 5. Treat smart money signals as confirmatory evidence, not primary thesis drivers.
 6. If the market seems efficient (price matches your estimate within {MIN_EDGE_THRESHOLD * 100}%), respect the market and PASS.
 7. You are optimizing for LONG-TERM expected value, not individual trade outcomes. A correct PASS is as valuable as a correct trade.
+8. NEVER reject a trade based on bankroll size. The Kelly engine handles position sizing — your job is only to estimate probabilities and edges. Even a $10 bankroll can trade $0.50 positions.
+9. Be AGGRESSIVE in identifying edges. If your probability estimate differs from the market by more than {MIN_EDGE_THRESHOLD * 100}%, that IS an edge — recommend the trade. Let the Kelly engine decide the size.
+10. For BUY_NO opportunities: if the market overprices an event (your probability < market probability), recommend BUY_NO. These are equally valid trades.
 
 ## WORKED EXAMPLES
 
