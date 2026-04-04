@@ -58,9 +58,9 @@ class TradeDecision(BaseModel):
     @field_validator("kelly_fraction")
     @classmethod
     def kelly_must_be_bounded(cls, v: float) -> float:
-        """Kelly fraction must be between 0.0 and 0.10 (safety cap)."""
-        if not (0.0 <= v <= 0.10):
-            raise ValueError(f"Kelly fraction must be between 0.0 and 0.10, got {v}")
+        """Kelly fraction must be between 0.0 and 0.20 (safety cap)."""
+        if not (0.0 <= v <= 0.20):
+            raise ValueError(f"Kelly fraction must be between 0.0 and 0.20, got {v}")
         return v
 
     @field_validator("confidence_score")
@@ -147,7 +147,7 @@ TRADE_TOOL_SCHEMA: dict = {
             "kelly_fraction": {
                 "type": "number",
                 "minimum": 0.0,
-                "maximum": 0.10,
+                "maximum": 0.20,
                 "description": "Recommended fraction of bankroll to wager (0.0 for PASS).",
             },
             "confidence_score": {
