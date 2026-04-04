@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Runtime data
+data/peak_prices.json
+
 # RSA private keys
 keys/
 *.pem

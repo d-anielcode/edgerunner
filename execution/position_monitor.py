@@ -92,8 +92,12 @@ class PositionMonitor:
         self._alerter = alerter
         self._running: bool = False
         # Track the highest price each position has reached (for trailing stop)
-        self._peak_prices: dict[str, Decimal] = {}
+        # Load from disk so peaks survive agent restarts
+        from data.peak_cache import load_peak_prices
+        self._peak_prices: dict[str, Decimal] = load_peak_prices()
         self._peak_lock = asyncio.Lock()
+        if self._peak_prices:
+            console.print(f"[blue]Loaded {len(self._peak_prices)} peak prices from cache.[/blue]")
         # Track positions we've exited (ticker → exit details) for re-entry logic
         self._exited_positions: dict[str, dict] = {}
 
@@ -180,6 +184,9 @@ class PositionMonitor:
             prev_peak = self._peak_prices.get(ticker, entry_price)
             if current_price > prev_peak:
                 self._peak_prices[ticker] = current_price
+                # Persist to disk so peaks survive restarts
+                from data.peak_cache import save_peak_prices
+                save_peak_prices(self._peak_prices)
             peak_price = self._peak_prices.get(ticker, entry_price)
 
         drop_from_peak = float((peak_price - current_price) / peak_price) if peak_price > 0 else 0.0
@@ -281,6 +288,8 @@ class PositionMonitor:
             prev_peak = self._peak_prices.get(ticker, entry_price)
             if current_price > prev_peak:
                 self._peak_prices[ticker] = current_price
+                from data.peak_cache import save_peak_prices
+                save_peak_prices(self._peak_prices)
             peak_price = self._peak_prices.get(ticker, entry_price)
 
         # Calculate drop from peak
@@ -465,9 +474,11 @@ Respond with EXACTLY one word: SELL or HOLD"""
                 "exit_time": time.monotonic(),
             }
 
-            # Remove from cache and peak tracking
+            # Remove from cache and peak tracking (persist to disk)
             self._cache.remove_position(position.kalshi_ticker)
             self._peak_prices.pop(position.kalshi_ticker, None)
+            from data.peak_cache import save_peak_prices
+            save_peak_prices(self._peak_prices)
 
             # Send Discord alert
             try:
