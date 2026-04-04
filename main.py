@@ -50,6 +50,7 @@ from data.nba_poller import NbaPoller
 from data.smart_money import SmartMoneyTracker
 from execution.kalshi_client import KalshiClient
 from execution.order_manager import OrderManager
+from execution.position_monitor import PositionMonitor
 from signals.analyzer import MarketAnalyzer
 
 console = Console()
@@ -142,6 +143,12 @@ class EdgeRunner:
         )
         self._order_manager: OrderManager = OrderManager(kalshi_client=self._kalshi_client)
         self._alerter: DiscordAlerter = DiscordAlerter()
+        self._position_monitor: PositionMonitor = PositionMonitor(
+            kalshi_client=self._kalshi_client,
+            cache=self._cache,
+            analyzer=self._analyzer,
+            alerter=self._alerter,
+        )
 
     async def _signal_evaluator(self) -> None:
         """
@@ -424,6 +431,7 @@ class EdgeRunner:
         await self._market_poller.stop()
         await self._nba_poller.stop()
         await self._smart_money.stop()
+        await self._position_monitor.stop()
         await self._kalshi_client.close()
 
         # Send shutdown alert
@@ -467,6 +475,7 @@ class EdgeRunner:
                 self._nba_poller.run(),
                 self._smart_money.run(),
                 self._signal_evaluator(),
+                self._position_monitor.run(),
                 self._watchdog(),
                 return_exceptions=True,
             )
