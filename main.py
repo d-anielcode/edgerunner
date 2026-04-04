@@ -157,26 +157,40 @@ class EdgeRunner:
 
         while self._running:
             try:
-                # Pull from queue with timeout (so we can check self._running)
+                # Wait for messages to accumulate, then drain the queue
+                # This ensures ALL market poller updates are in cache before evaluating
                 try:
                     msg = await asyncio.wait_for(self._queue.get(), timeout=EVAL_INTERVAL)
                 except asyncio.TimeoutError:
                     continue
 
-                # Dispatch based on message type
+                # Drain all pending messages into a batch (keeps latest per ticker)
+                latest_orderbooks: dict[str, OrderbookUpdate] = {}
                 if isinstance(msg, OrderbookUpdate) and msg.best_bid is not None:
-                    await self._evaluate_orderbook_update(msg)
+                    latest_orderbooks[msg.ticker] = msg
                 elif isinstance(msg, SmartMoneySignal):
                     console.print(
                         f"[yellow]Smart money signal: {msg.market_title} — "
                         f"{msg.consensus_side.upper()} ({msg.trader_count} traders)[/yellow]"
                     )
-                elif isinstance(msg, StaleDataAlert):
-                    await self._alerter.send_error_alert(
-                        component=f"Data Feed ({msg.source})",
-                        detail=f"No updates since {msg.last_update}",
-                        status="PASSing trades until data refreshes.",
-                    )
+
+                # Drain remaining queue items
+                while not self._queue.empty():
+                    try:
+                        batch_msg = self._queue.get_nowait()
+                        if isinstance(batch_msg, OrderbookUpdate) and batch_msg.best_bid is not None:
+                            latest_orderbooks[batch_msg.ticker] = batch_msg
+                        elif isinstance(batch_msg, SmartMoneySignal):
+                            console.print(
+                                f"[yellow]Smart money signal: {batch_msg.market_title} — "
+                                f"{batch_msg.consensus_side.upper()} ({batch_msg.trader_count} traders)[/yellow]"
+                            )
+                    except asyncio.QueueEmpty:
+                        break
+
+                # Evaluate each unique ticker (latest update only)
+                for ticker, update in latest_orderbooks.items():
+                    await self._evaluate_orderbook_update(update)
 
             except Exception as e:
                 console.print(
@@ -265,6 +279,21 @@ class EdgeRunner:
 
         if not decision.is_actionable:
             return
+
+        # Fix: Claude sometimes flips probabilities on BUY_NO.
+        # If BUY_NO but agent_prob > market_prob, Claude meant the opposite.
+        # Swap them so Kelly calculates correctly.
+        if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
+            from signals.schemas import TradeDecision as TD
+            decision = TD(
+                action=decision.action,
+                target_market_id=decision.target_market_id,
+                implied_market_probability=decision.agent_calculated_probability,
+                agent_calculated_probability=decision.implied_market_probability,
+                kelly_fraction=decision.kelly_fraction,
+                confidence_score=decision.confidence_score,
+                rationale=decision.rationale,
+            )
 
         # Execute the trade
         trade = await self._order_manager.execute_trade(
