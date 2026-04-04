@@ -370,7 +370,7 @@ class EdgeRunner:
                 market = await self._kalshi_client.get_market(ticker)
                 if market and market.get("title"):
                     self._market_titles[ticker] = market["title"]
-                    console.print(f"[blue]  {ticker[:35]} → {market['title'][:45]}[/blue]")
+                    console.print(f"[blue]  {ticker[:35]} = {market['title'][:45]}[/blue]")
             except Exception:
                 pass
             await asyncio.sleep(0.05)
