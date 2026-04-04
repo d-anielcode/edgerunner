@@ -99,14 +99,46 @@ class OrderManager:
                 )
             return None
 
-        # Step 3: Place order on Kalshi
+        # Step 3: Verify liquidity before placing order
         side = "yes" if decision.action == "BUY_YES" else "no"
+
+        # Check that the side we want to buy has a real price
+        # For BUY_YES: need best_bid (someone willing to sell YES to us)
+        # For BUY_NO: need best_ask < 1.00 (someone willing to sell NO to us)
+        if orderbook:
+            if side == "yes" and (orderbook.best_bid is None or orderbook.best_bid <= Decimal("0")):
+                console.print(
+                    f"[yellow]Order skipped: No YES liquidity on "
+                    f"{decision.target_market_id}[/yellow]"
+                )
+                return None
+            if side == "no" and (orderbook.best_ask is None or orderbook.best_ask >= Decimal("0.99")):
+                console.print(
+                    f"[yellow]Order skipped: No NO liquidity on "
+                    f"{decision.target_market_id}[/yellow]"
+                )
+                return None
+
+        # For player props: use the ASK price (cross the spread) instead of BID
+        # Limit orders at the bid on player props only fill when you're about to lose
+        # (adverse selection). Paying the ask guarantees a fill at a fair price.
+        exec_price = kelly.price
+        is_prop = decision.target_market_id.upper().startswith(
+            ("KXNBAPTS", "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBABLK", "KXNBASTL")
+        )
+        if is_prop and orderbook:
+            if side == "yes" and orderbook.best_ask is not None:
+                exec_price = orderbook.best_ask  # Pay the ask for immediate fill
+            elif side == "no" and orderbook.best_bid is not None:
+                exec_price = Decimal("1") - orderbook.best_bid  # NO ask = 1 - YES bid
+
+        # Step 4: Place order on Kalshi
         order_response = await self._kalshi.place_order(
             ticker=decision.target_market_id,
             side=side,
             action="buy",
             count=kelly.contracts,
-            price=kelly.price,
+            price=exec_price,
         )
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
