@@ -510,6 +510,28 @@ class EdgeRunner:
         if not decision.is_actionable:
             return
 
+        # Block trades where Claude admits it doesn't have the data
+        if decision.rationale:
+            no_data_phrases = [
+                "not in available",
+                "no player data",
+                "not in available player data",
+                "missing player data",
+                "without.*stats",
+                "insufficient.*data",
+                "no data available",
+                "limited player data",
+            ]
+            rationale_lower = decision.rationale.lower()
+            for phrase in no_data_phrases:
+                import re
+                if re.search(phrase, rationale_lower):
+                    console.print(
+                        f"[yellow]BLOCKED: Claude traded without data on "
+                        f"{decision.target_market_id} — '{phrase}' found in rationale.[/yellow]"
+                    )
+                    return
+
         # Validate BUY_NO probability direction
         if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
             console.print(
