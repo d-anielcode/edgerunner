@@ -115,18 +115,59 @@ class PositionMonitor:
                 console.print(f"[dim]Position monitor price error: {e}[/dim]")
             return None
 
+    def _is_player_prop(self, ticker: str) -> bool:
+        """
+        Check if a ticker is a player prop market.
+
+        Player props (points, rebounds, assists, 3PT, blocks, steals) are
+        highly volatile during games. Stop-losses don't work — hold to expiration.
+        Only game winners and spreads should use trailing stops.
+        """
+        ticker_upper = ticker.upper()
+        prop_prefixes = ["KXNBAPTS", "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBABLK", "KXNBASTL", "KXNBA2D"]
+        return any(ticker_upper.startswith(prefix) for prefix in prop_prefixes)
+
     async def _evaluate_position(self, position: Position) -> dict:
         """
         Evaluate whether a position should be held or exited.
 
-        Uses a TRAILING STOP-LOSS that ratchets up as the position profits:
-        1. Initial stop: sell if down 50% from entry
-        2. Once up 50%: floor moves to entry (never let a winner become a loser)
-        3. Trailing stop: sell if price drops 25% from its peak
-        4. Auto-take: sell if up 200% (lock in the bag)
+        TWO MODES:
+        - Game winners/spreads: Full trailing stop-loss system
+        - Player props: Hold to expiration (too volatile for stops, only auto-take at 200%+)
 
         Returns a dict with action, current_price, unrealized_pnl, pnl_pct, reason.
         """
+        # Player props: hold to expiration (no stop-loss, only extreme profit-take)
+        if self._is_player_prop(position.kalshi_ticker):
+            current_price = await self._get_current_price(
+                position.kalshi_ticker, position.side
+            )
+            if current_price is None:
+                return {
+                    "action": "hold", "current_price": None,
+                    "unrealized_pnl": Decimal("0"), "pnl_pct": 0.0,
+                    "reason": "Player prop: hold to expiration (no price data).",
+                }
+
+            pnl_per_contract = current_price - position.avg_price
+            unrealized_pnl = pnl_per_contract * position.quantity
+            pnl_pct = float(pnl_per_contract / position.avg_price) if position.avg_price > 0 else 0.0
+
+            # Only auto-take at 300%+ for player props (they can swing back)
+            if pnl_pct >= 3.00:
+                return {
+                    "action": "sell", "current_price": current_price,
+                    "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
+                    "reason": f"Player prop auto-take: up {pnl_pct:+.0%}. Locking in profit.",
+                }
+
+            return {
+                "action": "hold", "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl, "pnl_pct": pnl_pct,
+                "reason": f"Player prop: hold to expiration. P&L: {pnl_pct:+.0%} (${unrealized_pnl:+.2f})",
+            }
+
+        # Game winners/spreads: full trailing stop-loss system
         current_price = await self._get_current_price(
             position.kalshi_ticker, position.side
         )
