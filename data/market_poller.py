@@ -95,6 +95,14 @@ class MarketPoller:
         best_ask = (Decimal("1") - Decimal(no_levels[-1][0])) if no_levels else None
         ask_volume = Decimal(str(sum(float(level[1]) for level in no_levels[-5:]))) if no_levels else Decimal("0")
 
+        # If one side is missing, infer from the other
+        # YES bid missing but ask exists → bid = ask - 0.01 (minimum spread)
+        if best_bid is None and best_ask is not None:
+            best_bid = max(best_ask - Decimal("0.01"), Decimal("0.01"))
+        # YES ask missing but bid exists → ask = bid + 0.01
+        if best_ask is None and best_bid is not None:
+            best_ask = min(best_bid + Decimal("0.01"), Decimal("0.99"))
+
         # Skip if no meaningful data
         if best_bid is None and best_ask is None:
             return

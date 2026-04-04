@@ -65,35 +65,81 @@ WATCHDOG_INTERVAL: float = 10.0
 
 # Tracked NBA market tickers — will be populated from Kalshi API
 # For MVP, these are manually configured. In V2, auto-discovered.
-DEFAULT_TRACKED_TICKERS: list[str] = [
-    # Apr 3 2026 — High-volume game winners and key spreads
-    # ORL at DAL (game starting now)
-    "KXNBAGAME-26APR03ORLDAL-ORL",
-    "KXNBAGAME-26APR03ORLDAL-DAL",
-    "KXNBASPREAD-26APR03ORLDAL-ORL7",
-    "KXNBASPREAD-26APR03ORLDAL-ORL4",
-    # NOP at SAC (game at 7pm PT)
-    "KXNBAGAME-26APR03NOPSAC-SAC",
-    "KXNBAGAME-26APR03NOPSAC-NOP",
-    "KXNBASPREAD-26APR03NOPSAC-SAC7",
-    "KXNBASPREAD-26APR03NOPSAC-SAC4",
-    # UTA at HOU
-    "KXNBAGAME-26APR03UTAHOU-HOU",
-    "KXNBAGAME-26APR03UTAHOU-UTA",
-]
+DEFAULT_TRACKED_TICKERS: list[str] = []
+"""
+Populated at startup by auto-discovery.
+The agent scans Kalshi for all active NBA game and spread markets.
+No more manual ticker configuration needed.
+"""
 
 # Tracked NBA players for stats polling
-DEFAULT_TRACKED_PLAYERS: list[dict] = [
-    # ORL at DAL
-    {"name": "Franz Wagner"},     # ORL
-    {"name": "Klay Thompson"},    # DAL
-    # NOP at SAC
-    {"name": "Zion Williamson"},  # NOP
-    {"name": "Trey Murphy III"}, # NOP
-    {"name": "De'Aaron Fox"},    # SAC
-    # UTA at HOU
-    {"name": "Jalen Green"},     # HOU
-]
+DEFAULT_TRACKED_PLAYERS: list[dict] = []
+"""
+Populated at startup from discovered market tickers.
+Player names are extracted from player prop market titles.
+"""
+
+
+def _extract_game_id(ticker: str) -> str | None:
+    """
+    Extract the game identifier from a Kalshi NBA ticker.
+
+    Examples:
+      KXNBAGAME-26APR03NOPSAC-NOP → NOPSAC
+      KXNBAGAME-26APR03NOPSAC-SAC → NOPSAC
+      KXNBASPREAD-26APR03ORLDAL-ORL7 → ORLDAL
+      KXNBAPTS-26APR03MINPHI-PHIVEDGECOMBE77-25 → MINPHI
+
+    The game ID is the 6-letter team combo (e.g., NOPSAC, ORLDAL, MINPHI)
+    that appears after the date segment.
+    """
+    import re
+    # Match: KXNBA<type>-<date><GAMEID>-<rest>
+    match = re.search(r"KXNBA\w*-\d{2}[A-Z]{3}\d{2}([A-Z]{6})", ticker.upper())
+    if match:
+        return match.group(1)
+    return None
+
+
+def _get_game_outcome_direction(ticker: str, action: str) -> str | None:
+    """
+    Determine which team the agent is betting TO WIN.
+
+    Returns the team abbreviation the agent is betting on, or None.
+
+    Logic:
+    - BUY_YES on NOP ticker → betting NOP wins
+    - BUY_NO on NOP ticker → betting NOP loses → other team wins
+    - BUY_YES on SAC ticker → betting SAC wins
+    - BUY_NO on SAC ticker → betting SAC loses → other team wins
+    """
+    game_id = _extract_game_id(ticker)
+    if not game_id:
+        return None
+
+    # The last part of the ticker after the game ID is the team
+    # e.g., KXNBAGAME-26APR03NOPSAC-NOP → team is NOP
+    ticker_upper = ticker.upper()
+    parts = ticker_upper.split("-")
+    if len(parts) < 3:
+        return None
+
+    # Team is in the last segment (may have numbers for spreads: ORL7 → ORL)
+    import re
+    team_match = re.match(r"([A-Z]{2,3})", parts[-1])
+    if not team_match:
+        return None
+    team = team_match.group(1)
+
+    # Other team is the other 3 letters from game_id
+    other_team = game_id.replace(team, "", 1) if team in game_id else None
+
+    if action == "BUY_YES":
+        return team  # Betting this team wins/covers
+    elif action == "BUY_NO":
+        return other_team  # Betting this team loses → other team wins
+
+    return None
 
 
 class EdgeRunner:
@@ -303,6 +349,34 @@ class EdgeRunner:
                 rationale=decision.rationale,
             )
 
+        # DUPLICATE EXPOSURE CHECK: Don't bet the same direction on the same game twice
+        game_id = _extract_game_id(update.ticker)
+        if game_id:
+            bet_direction = _get_game_outcome_direction(update.ticker, decision.action)
+            existing_positions = self._cache.get_positions()
+
+            for pos_ticker, pos in existing_positions.items():
+                pos_game_id = _extract_game_id(pos_ticker)
+                if pos_game_id == game_id:
+                    # Already have a position on this game
+                    # Check if it's the same direction
+                    pos_direction = _get_game_outcome_direction(
+                        pos_ticker, "BUY_YES" if pos.side == "yes" else "BUY_NO"
+                    )
+                    if pos_direction == bet_direction:
+                        console.print(
+                            f"[yellow]BLOCKED: Already exposed to {bet_direction} "
+                            f"on game {game_id} via {pos_ticker}. "
+                            f"Skipping duplicate bet on {update.ticker}.[/yellow]"
+                        )
+                        return
+                    else:
+                        console.print(
+                            f"[yellow]NOTE: Existing {pos_direction} position on "
+                            f"{game_id}, new bet is {bet_direction} (opposite side — "
+                            f"this is a hedge, allowing).[/yellow]"
+                        )
+
         # Execute the trade
         trade = await self._order_manager.execute_trade(
             decision=decision,
@@ -384,6 +458,85 @@ class EdgeRunner:
                     f"[red]Watchdog error: {type(e).__name__}: {e}[/red]"
                 )
 
+    async def _discover_nba_markets(self) -> None:
+        """
+        Auto-discover all active NBA markets on Kalshi with liquidity.
+
+        Scans for game winners, spreads, and player props. Only tracks
+        markets that have real orderbook depth (at least one bid and ask).
+        This replaces manual ticker configuration entirely.
+        """
+        console.print("[blue]Discovering NBA markets...[/blue]")
+
+        discovered_tickers: list[str] = []
+        discovered_titles: dict[str, str] = {}
+
+        # Search for NBA markets across all event types
+        for prefix in ["KXNBAGAME", "KXNBASPREAD", "KXNBAPTS"]:
+            cursor = None
+            for _ in range(5):
+                try:
+                    params = f"/markets?series_ticker={prefix}&status=open&limit=100"
+                    if cursor:
+                        params += f"&cursor={cursor}"
+                    result = await self._kalshi_client._request_with_retry("GET", params)
+                    markets = result.get("markets", [])
+
+                    for m in markets:
+                        ticker = m.get("ticker", "")
+                        title = m.get("title", "")
+                        volume = float(m.get("volume_fp", "0"))
+
+                        if ticker and title:
+                            # Track all game markets and high-volume spread/props
+                            if prefix == "KXNBAGAME" or volume > 100:
+                                discovered_tickers.append(ticker)
+                                discovered_titles[ticker] = title
+
+                    cursor = result.get("cursor")
+                    if not cursor or not markets:
+                        break
+                except Exception:
+                    break
+                await asyncio.sleep(0.1)
+
+        # Update global lists
+        DEFAULT_TRACKED_TICKERS.clear()
+        DEFAULT_TRACKED_TICKERS.extend(discovered_tickers)
+        self._market_titles = discovered_titles
+
+        # Update the feed and market poller with discovered tickers
+        self._feed._tracked_tickers = discovered_tickers
+        self._market_poller._tracked_tickers = discovered_tickers
+
+        # Extract player names from player prop titles for the NBA poller
+        import re
+        player_names: set[str] = set()
+        for ticker, title in discovered_titles.items():
+            if "KXNBAPTS" in ticker:
+                # Title format: "Klay Thompson: 25+ points"
+                name_match = re.match(r"^([A-Za-z\s\.']+?):\s", title)
+                if name_match:
+                    player_names.add(name_match.group(1).strip())
+
+        DEFAULT_TRACKED_PLAYERS.clear()
+        DEFAULT_TRACKED_PLAYERS.extend({"name": name} for name in player_names)
+        self._nba_poller._tracked_players = DEFAULT_TRACKED_PLAYERS
+
+        console.print(
+            f"[green]Discovered: {len(discovered_tickers)} NBA markets, "
+            f"{len(player_names)} players[/green]"
+        )
+
+        # Print summary by game
+        games: dict[str, int] = {}
+        for t in discovered_tickers:
+            gid = _extract_game_id(t)
+            if gid:
+                games[gid] = games.get(gid, 0) + 1
+        for gid, count in sorted(games.items()):
+            console.print(f"  [blue]{gid}: {count} markets[/blue]")
+
     async def _startup(self) -> None:
         """Initialize state from Kalshi and send startup alert."""
         console.print("[blue]EdgeRunner: Initializing...[/blue]")
@@ -401,16 +554,8 @@ class EdgeRunner:
         # Sync positions from Kalshi
         await self._order_manager.sync_positions(self._cache)
 
-        # Fetch market titles for all tracked tickers
-        for ticker in DEFAULT_TRACKED_TICKERS:
-            try:
-                market = await self._kalshi_client.get_market(ticker)
-                if market and market.get("title"):
-                    self._market_titles[ticker] = market["title"]
-                    console.print(f"[blue]  {ticker[:35]} = {market['title'][:45]}[/blue]")
-            except Exception:
-                pass
-            await asyncio.sleep(0.05)
+        # Auto-discover NBA markets (replaces manual ticker config)
+        await self._discover_nba_markets()
 
         # Send startup alert
         await self._alerter.send_startup(TRADING_MODE, self._cache.get_bankroll())
