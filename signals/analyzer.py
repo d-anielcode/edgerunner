@@ -171,11 +171,15 @@ class MarketAnalyzer:
             )
 
         # Build the user message from live data
+        # Get all player stats from cache for game context
+        all_stats = list(cache.get_all_player_stats().values())
+
         user_message = build_market_context(
             ticker=ticker,
             title=title,
             orderbook=orderbook,
             player_stats=player_stats,
+            all_player_stats=all_stats if all_stats else None,
             smart_money=smart_money,
             game_data=game_data,
             time_to_close_min=time_to_close_min,

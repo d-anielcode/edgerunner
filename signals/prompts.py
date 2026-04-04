@@ -259,6 +259,7 @@ def build_market_context(
     title: str,
     orderbook: OrderbookEntry | None,
     player_stats: NbaStatsUpdate | None = None,
+    all_player_stats: list[NbaStatsUpdate] | None = None,
     smart_money: SmartMoneySignal | None = None,
     game_data: dict | None = None,
     time_to_close_min: float | None = None,
@@ -294,10 +295,10 @@ def build_market_context(
     if time_to_close_min is not None:
         lines.append(f"Time to Close: {time_to_close_min:.0f} minutes")
 
-    # Player stats
+    # Player stats — single player (for player prop markets)
     if player_stats:
         lines.append("")
-        lines.append("## PLAYER DATA")
+        lines.append("## PRIMARY PLAYER")
         lines.append(f"Player: {player_stats.player_name}")
         lines.append(f"Status: {player_stats.status}")
         lines.append(
@@ -311,6 +312,16 @@ def build_market_context(
             lines.append(f"Last {len(player_stats.recent_game_reb)} Games REB: {player_stats.recent_game_reb}")
         if player_stats.recent_game_ast:
             lines.append(f"Last {len(player_stats.recent_game_ast)} Games AST: {player_stats.recent_game_ast}")
+
+    # All available player stats (for game winner/spread markets)
+    if all_player_stats:
+        lines.append("")
+        lines.append("## AVAILABLE PLAYER DATA")
+        for ps in all_player_stats[:6]:  # Cap at 6 players to control token cost
+            lines.append(
+                f"- {ps.player_name} ({ps.status}): "
+                f"{ps.season_avg_pts} PPG, {ps.season_avg_reb} RPG, {ps.season_avg_ast} APG"
+            )
 
     # Game context
     if game_data:

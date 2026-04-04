@@ -218,31 +218,44 @@ class EdgeRunner:
         self._last_analyzed_price[update.ticker] = current_price
         self._last_analyzed_time[update.ticker] = time.monotonic()
 
-        # Get player stats if available (match ticker to player — simplified for MVP)
-        player_stats = None
-        all_stats = self._cache.get_all_player_stats()
-        if all_stats:
-            # Use the first available player stats for now
-            # In V2, match ticker to specific player
-            player_stats = next(iter(all_stats.values()), None)
+        # Get all available player stats
+        all_stats_dict = self._cache.get_all_player_stats()
+        all_stats_list = list(all_stats_dict.values()) if all_stats_dict else []
+
+        # Get live game data for context
+        live_games = self._cache.get_live_games()
+        game_data = None
+        if live_games:
+            # Build game context from any available live game data
+            game_info = {}
+            for gid, game in live_games.items():
+                game_info[f"{game.away_team} @ {game.home_team}"] = (
+                    f"{game.status} {game.game_time} | "
+                    f"{game.away_team} {game.away_score} - {game.home_team} {game.home_score}"
+                )
+            if game_info:
+                game_data = game_info
 
         # Get smart money signal if available
         smart_money = None
         signals = self._cache.get_smart_money_signals()
-        # Try to find a matching smart money signal by keyword overlap
         for title, sig in signals.items():
-            if any(kw in update.ticker.lower() for kw in title.lower().split()):
+            # Match by team abbreviation in ticker
+            ticker_lower = update.ticker.lower()
+            title_lower = title.lower()
+            if any(word in ticker_lower for word in title_lower.split() if len(word) > 2):
                 smart_money = sig
                 break
 
-        # Call Claude
+        # Call Claude with ALL available context
         decision = await self._analyzer.analyze_market(
             ticker=update.ticker,
-            title=update.ticker,  # Title will come from Kalshi API in V2
+            title=update.ticker,
             cache=self._cache,
             orderbook=orderbook,
-            player_stats=player_stats,
+            player_stats=all_stats_list[0] if all_stats_list else None,
             smart_money=smart_money,
+            game_data=game_data,
         )
 
         if not decision.is_actionable:
