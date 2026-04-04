@@ -221,18 +221,37 @@ class MarketAnalyzer:
     @_claude_breaker
     async def _call_claude(self, ticker: str, user_message: str) -> TradeDecision:
         """
-        Make the actual Claude API call. Protected by circuit breaker.
+        Make a SINGLE-market Claude API call. Protected by circuit breaker.
+        Used as fallback when batching isn't possible.
+        """
+        decisions = await self._call_claude_batch(user_message)
+        # Find the decision for this specific ticker
+        for d in decisions:
+            if d.target_market_id == ticker:
+                return d
+        # If no matching decision, return the first one or PASS
+        return decisions[0] if decisions else pass_decision(ticker, "Claude returned no decision.")
+
+    @_claude_breaker
+    async def _call_claude_batch(self, user_message: str) -> list[TradeDecision]:
+        """
+        Make a BATCHED Claude API call that evaluates multiple markets at once.
+
+        One API call with cached system prompt handles 3-8 markets.
+        Claude returns one tool call per market. This cuts API costs by 60-80%
+        since the ~4,300 token system prompt is sent once (cached) instead of
+        once per market.
 
         Uses:
         - Cached system prompt (cache_control: ephemeral, 5-min TTL)
-        - Strict tool use (guaranteed schema compliance)
-        - tool_choice: forces Claude to use execute_prediction_trade
+        - tool_choice: "any" (allows multiple tool calls in one response)
+        - Strict tool use (guaranteed schema compliance per call)
         """
         start_time = time.monotonic()
 
         response = await self._client.messages.create(
             model=MODEL_ID,
-            max_tokens=1024,
+            max_tokens=4096,  # Higher limit for multiple decisions
             system=[
                 {
                     "type": "text",
@@ -241,7 +260,7 @@ class MarketAnalyzer:
                 }
             ],
             tools=self._tools,
-            tool_choice={"type": "tool", "name": "execute_prediction_trade"},
+            tool_choice={"type": "any"},
             messages=[{"role": "user", "content": user_message}],
         )
 
@@ -249,18 +268,108 @@ class MarketAnalyzer:
         self._track_cost(response.usage)
 
         if DEBUG_MODE:
-            console.print(f"[dim]Claude latency: {latency_ms}ms[/dim]")
+            console.print(f"[dim]Claude batch latency: {latency_ms}ms[/dim]")
 
-        # Extract the tool call from the response
+        # Extract ALL tool calls from the response
+        decisions: list[TradeDecision] = []
         for block in response.content:
             if block.type == "tool_use" and block.name == "execute_prediction_trade":
-                # Parse Claude's output through Pydantic validation
-                decision = TradeDecision(**block.input)
-                return decision
+                try:
+                    decision = TradeDecision(**block.input)
+                    decisions.append(decision)
+                except Exception as e:
+                    if DEBUG_MODE:
+                        console.print(f"[dim]Failed to parse tool call: {e}[/dim]")
 
-        # If no tool call found (shouldn't happen with tool_choice forced)
-        console.print("[red]Claude returned no tool call — unexpected.[/red]")
-        return pass_decision(ticker, "Claude returned no tool call.")
+        if not decisions:
+            console.print("[red]Claude returned no tool calls in batch.[/red]")
+
+        return decisions
+
+    async def analyze_markets_batch(
+        self,
+        markets: list[dict],
+        cache: AgentCache,
+    ) -> list[TradeDecision]:
+        """
+        Evaluate MULTIPLE markets in a single Claude API call.
+
+        This is the cost-optimized path. Instead of calling Claude once per
+        market (each paying for the system prompt), we bundle 3-8 markets
+        into one user message and get all decisions back at once.
+
+        Args:
+            markets: List of dicts with keys: ticker, title, orderbook, player_stats,
+                     smart_money, game_data
+            cache: AgentCache for bankroll and position data
+
+        Returns:
+            List of TradeDecisions (one per market that Claude evaluated).
+        """
+        if not markets:
+            return []
+
+        if self.is_over_budget:
+            return [
+                pass_decision(m["ticker"], "Monthly budget exceeded.")
+                for m in markets
+            ]
+
+        # Build combined user message with ALL markets
+        all_stats = list(cache.get_all_player_stats().values())
+        sections: list[str] = []
+
+        for i, m in enumerate(markets, 1):
+            section = f"--- MARKET {i} of {len(markets)} ---\n"
+            section += build_market_context(
+                ticker=m["ticker"],
+                title=m.get("title", m["ticker"]),
+                orderbook=m.get("orderbook"),
+                player_stats=m.get("player_stats"),
+                all_player_stats=all_stats if all_stats else None,
+                smart_money=m.get("smart_money"),
+                game_data=m.get("game_data"),
+                current_positions=cache.get_position_count(),
+                bankroll=cache.get_bankroll(),
+            )
+            sections.append(section)
+
+        combined_message = "\n\n".join(sections)
+        combined_message += (
+            f"\n\nEvaluate ALL {len(markets)} markets above. "
+            f"Call the execute_prediction_trade tool ONCE for EACH market. "
+            f"You must return exactly {len(markets)} tool calls."
+        )
+
+        tickers = [m["ticker"] for m in markets]
+        console.print(
+            f"[yellow]Batch analyzing {len(markets)} markets: "
+            f"{', '.join(t[:20] for t in tickers[:3])}{'...' if len(tickers) > 3 else ''}[/yellow]"
+        )
+
+        try:
+            decisions = await self._call_claude_batch(combined_message)
+
+            for d in decisions:
+                if d.is_actionable:
+                    console.print(
+                        f"[green]EDGE FOUND: {d.action} on {d.target_market_id} | "
+                        f"Edge: {d.edge:.1%} | Kelly: {d.kelly_fraction:.3f} | "
+                        f"Confidence: {d.confidence_score:.2f}[/green]"
+                    )
+                elif DEBUG_MODE:
+                    console.print(
+                        f"[dim]PASS: {d.target_market_id} — {d.rationale[:60]}[/dim]"
+                    )
+
+            return decisions
+
+        except CircuitBreakerError:
+            console.print("[red]Claude API circuit breaker OPEN.[/red]")
+            return [pass_decision(m["ticker"], "Circuit breaker open.") for m in markets]
+        except Exception as e:
+            console.print(f"[red]Batch analysis error: {type(e).__name__}: {e}[/red]")
+            return [pass_decision(m["ticker"], f"Batch error: {e}") for m in markets]
 
     # --- Post-Session Debrief ---
 

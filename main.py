@@ -249,9 +249,24 @@ class EdgeRunner:
                     except asyncio.QueueEmpty:
                         break
 
-                # Evaluate each unique ticker (latest update only)
+                # Evaluate markets in BATCHES (3-8 per Claude call) to save API cost
+                # Filter out markets that don't need analysis first
+                markets_to_analyze: list[dict] = []
                 for ticker, update in latest_orderbooks.items():
-                    await self._evaluate_orderbook_update(update)
+                    market_data = self._prepare_market_for_analysis(update)
+                    if market_data is not None:
+                        markets_to_analyze.append(market_data)
+
+                # Process in batches of 5
+                BATCH_SIZE = 5
+                for i in range(0, len(markets_to_analyze), BATCH_SIZE):
+                    batch = markets_to_analyze[i:i + BATCH_SIZE]
+                    if len(batch) == 1:
+                        # Single market — use regular path
+                        await self._evaluate_single_market(batch[0])
+                    elif batch:
+                        # Multiple markets — use batched Claude call
+                        await self._evaluate_market_batch(batch)
 
             except Exception as e:
                 console.print(
@@ -421,6 +436,153 @@ class EdgeRunner:
                 bankroll=bankroll,
                 latency_ms=trade.execution_latency_ms or 0,
             )
+
+    def _prepare_market_for_analysis(self, update: OrderbookUpdate) -> dict | None:
+        """
+        Pre-filter a market update. Returns a dict ready for Claude if it passes
+        all checks, or None if it should be skipped.
+
+        This is the gate that prevents wasteful API calls.
+        """
+        orderbook = self._cache.get_orderbook(update.ticker)
+        if orderbook is None or orderbook.best_bid is None:
+            return None
+
+        # Skip if spread is too wide
+        if orderbook.spread is not None and orderbook.spread > Decimal("0.05"):
+            return None
+
+        # Skip if price hasn't changed AND analysis is recent
+        current_price = update.best_bid or Decimal("0")
+        last_price = self._last_analyzed_price.get(update.ticker, Decimal("-1"))
+        last_time = self._last_analyzed_time.get(update.ticker, 0.0)
+        time_since = time.monotonic() - last_time
+
+        if last_price > 0 and current_price > 0:
+            pct_change = abs(current_price - last_price) / last_price
+            price_changed = pct_change >= Decimal("0.02")
+        else:
+            price_changed = abs(current_price - last_price) >= self._min_price_change
+
+        analysis_stale = time_since >= self._max_stale_analysis
+
+        if not price_changed and not analysis_stale:
+            return None
+
+        self._last_analyzed_price[update.ticker] = current_price
+        self._last_analyzed_time[update.ticker] = time.monotonic()
+
+        # Build game context
+        live_games = self._cache.get_live_games()
+        game_data = None
+        if live_games:
+            game_info = {}
+            for gid, game in live_games.items():
+                game_info[f"{game.away_team} @ {game.home_team}"] = (
+                    f"{game.status} {game.game_time} | "
+                    f"{game.away_team} {game.away_score} - {game.home_team} {game.home_score}"
+                )
+            if game_info:
+                game_data = game_info
+
+        # Get smart money
+        smart_money = None
+        signals = self._cache.get_smart_money_signals()
+        for title, sig in signals.items():
+            ticker_lower = update.ticker.lower()
+            title_lower = title.lower()
+            if any(word in ticker_lower for word in title_lower.split() if len(word) > 2):
+                smart_money = sig
+                break
+
+        return {
+            "ticker": update.ticker,
+            "title": self._market_titles.get(update.ticker, update.ticker),
+            "orderbook": orderbook,
+            "smart_money": smart_money,
+            "game_data": game_data,
+            "update": update,
+        }
+
+    async def _execute_decision(self, decision, update_ticker: str) -> None:
+        """Execute a trade decision after validation checks."""
+        if not decision.is_actionable:
+            return
+
+        # Validate BUY_NO probability direction
+        if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
+            console.print(
+                f"[yellow]SKIPPED: BUY_NO with inconsistent probabilities on "
+                f"{decision.target_market_id}.[/yellow]"
+            )
+            return
+
+        # Duplicate exposure check
+        game_id = _extract_game_id(decision.target_market_id)
+        if game_id:
+            bet_direction = _get_game_outcome_direction(decision.target_market_id, decision.action)
+            existing_positions = self._cache.get_positions()
+
+            for pos_ticker, pos in existing_positions.items():
+                pos_game_id = _extract_game_id(pos_ticker)
+                if pos_game_id == game_id:
+                    pos_direction = _get_game_outcome_direction(
+                        pos_ticker, "BUY_YES" if pos.side == "yes" else "BUY_NO"
+                    )
+                    if pos_direction == bet_direction:
+                        console.print(
+                            f"[yellow]BLOCKED: Already exposed to {bet_direction} "
+                            f"on game {game_id}.[/yellow]"
+                        )
+                        return
+
+        # Execute
+        orderbook = self._cache.get_orderbook(decision.target_market_id)
+        trade = await self._order_manager.execute_trade(
+            decision=decision,
+            cache=self._cache,
+            orderbook=orderbook,
+            max_bankroll=self._starting_bankroll,
+        )
+
+        if trade is not None:
+            bankroll = self._cache.get_bankroll()
+            bankroll_pct = (
+                float(trade.price * trade.quantity / bankroll * 100)
+                if bankroll > 0
+                else 0.0
+            )
+            await self._alerter.send_trade_alert(
+                ticker=trade.kalshi_ticker,
+                side=trade.side,
+                price=trade.price,
+                bet_amount=trade.price * trade.quantity,
+                bankroll_pct=bankroll_pct,
+                rationale=trade.claude_reasoning or "",
+                bankroll=bankroll,
+                latency_ms=trade.execution_latency_ms or 0,
+            )
+
+    async def _evaluate_single_market(self, market_data: dict) -> None:
+        """Evaluate a single market using the standard Claude call."""
+        decision = await self._analyzer.analyze_market(
+            ticker=market_data["ticker"],
+            title=market_data["title"],
+            cache=self._cache,
+            orderbook=market_data.get("orderbook"),
+            smart_money=market_data.get("smart_money"),
+            game_data=market_data.get("game_data"),
+        )
+        await self._execute_decision(decision, market_data["ticker"])
+
+    async def _evaluate_market_batch(self, batch: list[dict]) -> None:
+        """Evaluate multiple markets in one batched Claude call."""
+        decisions = await self._analyzer.analyze_markets_batch(
+            markets=batch,
+            cache=self._cache,
+        )
+        for decision in decisions:
+            await self._execute_decision(decision, decision.target_market_id)
 
     async def _watchdog(self) -> None:
         """
