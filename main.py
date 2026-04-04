@@ -690,8 +690,19 @@ class EdgeRunner:
                         volume = float(m.get("volume_fp", "0"))
 
                         if ticker and title:
-                            # Track all game markets and high-volume spread/props
-                            if prefix == "KXNBAGAME" or volume > 100:
+                            # Be SELECTIVE about what we track to avoid queue overflow
+                            # Game winners: always track (most liquid, best for analysis)
+                            # Spreads: only track if meaningful volume (>1000)
+                            # Player props: only track high-volume props (>500)
+                            should_track = False
+                            if prefix == "KXNBAGAME":
+                                should_track = True  # Always track game winners
+                            elif prefix == "KXNBASPREAD" and volume > 1000:
+                                should_track = True  # Only liquid spreads
+                            elif prefix == "KXNBAPTS" and volume > 500:
+                                should_track = True  # Only popular player props
+
+                            if should_track:
                                 discovered_tickers.append(ticker)
                                 discovered_titles[ticker] = title
 

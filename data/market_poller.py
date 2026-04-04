@@ -54,6 +54,7 @@ class MarketPoller:
         self._kalshi = kalshi_client
         self._tracked_tickers = tracked_tickers
         self._running: bool = False
+        self._last_prices: dict[str, Decimal | None] = {}  # Track last price per ticker
 
     async def _poll_market_to_cache(self, ticker: str):
         """
@@ -127,12 +128,13 @@ class MarketPoller:
 
     async def _poll_cycle(self) -> None:
         """
-        Poll all tracked markets, update cache, THEN push to queue.
+        Poll all tracked markets, update cache, THEN push CHANGED markets to queue.
 
-        Two-phase approach prevents the signal evaluator from processing
-        partial data — all markets are in cache before any queue messages fire.
+        Two-phase approach:
+        1. Fetch all orderbooks and update cache
+        2. Only push to queue if the price actually changed (prevents queue overflow)
         """
-        # Phase 1: Fetch all orderbooks and update cache (no queue pushes yet)
+        # Phase 1: Fetch all orderbooks and update cache
         updates: list = []
         for ticker in self._tracked_tickers:
             try:
@@ -147,13 +149,23 @@ class MarketPoller:
                     )
             await asyncio.sleep(0.1)
 
-        # Phase 2: Push ALL updates to queue at once (cache is fully populated)
+        # Phase 2: Only push markets where price changed (prevents queue overflow)
+        pushed = 0
         for update in updates:
-            await self._queue.put(update)
+            last = self._last_prices.get(update.ticker)
+            current = update.best_bid
+
+            if last is None or (current is not None and last != current):
+                self._last_prices[update.ticker] = current
+                try:
+                    self._queue.put_nowait(update)
+                    pushed += 1
+                except asyncio.QueueFull:
+                    pass  # Drop if queue is full — stale data isn't worth blocking
 
         console.print(
             f"[blue]Market Poller: {len(updates)}/{len(self._tracked_tickers)} "
-            f"markets updated via REST.[/blue]"
+            f"polled, {pushed} changed (pushed to queue).[/blue]"
         )
 
     async def run(self) -> None:
