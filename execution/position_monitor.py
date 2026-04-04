@@ -80,6 +80,8 @@ class PositionMonitor:
         self._running: bool = False
         # Track the highest price each position has reached (for trailing stop)
         self._peak_prices: dict[str, Decimal] = {}
+        # Track positions we've exited (ticker → exit details) for re-entry logic
+        self._exited_positions: dict[str, dict] = {}
 
     async def _get_current_price(self, ticker: str, side: str) -> Decimal | None:
         """
@@ -351,6 +353,15 @@ Respond with EXACTLY one word: SELL or HOLD"""
         )
 
         if result is not None:
+            # Record exit for potential re-entry
+            self._exited_positions[position.kalshi_ticker] = {
+                "side": position.side,
+                "entry_price": float(position.avg_price),
+                "exit_price": float(current_price),
+                "exit_reason": reason,
+                "exit_time": time.monotonic(),
+            }
+
             # Remove from cache and peak tracking
             self._cache.remove_position(position.kalshi_ticker)
             self._peak_prices.pop(position.kalshi_ticker, None)
@@ -379,12 +390,10 @@ Respond with EXACTLY one word: SELL or HOLD"""
 
     async def _check_cycle(self) -> None:
         """
-        One monitoring cycle: check all open positions.
+        One monitoring cycle: check open positions and re-entry opportunities.
         """
+        # Check open positions for stop-loss / profit-take
         positions = self._cache.get_positions()
-        if not positions:
-            return
-
         for ticker, position in positions.items():
             evaluation = await self._evaluate_position(position)
 
@@ -399,7 +408,73 @@ Respond with EXACTLY one word: SELL or HOLD"""
                     position, evaluation["current_price"], evaluation["reason"]
                 )
 
-            await asyncio.sleep(0.5)  # Small delay between position checks
+            await asyncio.sleep(0.5)
+
+        # Check exited positions for re-entry opportunities
+        await self._check_reentry_opportunities()
+
+    async def _check_reentry_opportunities(self) -> None:
+        """
+        Check if any previously exited positions now offer a better entry.
+
+        Re-entry criteria:
+        - At least 2 minutes since exit (avoid whipsaw)
+        - Current price is at least 30% below our previous entry price
+        - We don't already have a position on this game
+        """
+        if not self._exited_positions:
+            return
+
+        # Don't re-enter tickers we currently hold
+        current_positions = self._cache.get_positions()
+        min_wait = 120.0  # 2 minutes since exit
+        reentry_discount = 0.30  # Price must be 30% below previous entry
+
+        expired = []
+        for ticker, exit_info in self._exited_positions.items():
+            # Skip if we already have a position on this ticker
+            if ticker in current_positions:
+                continue
+
+            # Skip if exited too recently
+            time_since_exit = time.monotonic() - exit_info["exit_time"]
+            if time_since_exit < min_wait:
+                continue
+
+            # Expire old exits (>30 min — market has likely changed too much)
+            if time_since_exit > 1800:
+                expired.append(ticker)
+                continue
+
+            # Check current price
+            current_price = await self._get_current_price(ticker, exit_info["side"])
+            if current_price is None:
+                continue
+
+            prev_entry = Decimal(str(exit_info["entry_price"]))
+            discount = float((prev_entry - current_price) / prev_entry) if prev_entry > 0 else 0
+
+            if discount >= reentry_discount:
+                console.print(
+                    f"[green]RE-ENTRY OPPORTUNITY: {ticker} | "
+                    f"Prev entry=${prev_entry}, now ${current_price} "
+                    f"({discount:.0%} cheaper). Flagging for Claude.[/green]"
+                )
+                # Push an orderbook update to the queue so the signal evaluator
+                # picks it up and sends it to Claude for analysis
+                from data.cache import OrderbookUpdate
+                update = self._cache.update_orderbook(
+                    ticker=ticker,
+                    best_bid=current_price,
+                    best_ask=current_price + Decimal("0.01"),
+                    bid_volume=Decimal("1000"),
+                    ask_volume=Decimal("1000"),
+                )
+                # The signal evaluator will process this via the normal flow
+
+        # Clean up expired exits
+        for ticker in expired:
+            del self._exited_positions[ticker]
 
     async def run(self) -> None:
         """
