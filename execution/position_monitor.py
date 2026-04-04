@@ -38,9 +38,20 @@ UTC = timezone.utc
 # How often to check positions (seconds)
 POSITION_CHECK_INTERVAL: float = 60.0
 
-# Stop-loss triggers
-PRICE_MOVE_THRESHOLD: float = 0.50  # 50% adverse price move triggers review
+# Initial stop-loss (from entry price)
+INITIAL_STOP_LOSS_PCT: float = 0.50  # Sell if position drops 50% from entry
+
+# Trailing stop-loss (from peak price)
+TRAILING_STOP_PCT: float = 0.25  # Sell if price drops 25% from its peak
+
+# Breakeven lock: once position is up this much, floor moves to entry price
+BREAKEVEN_LOCK_PCT: float = 0.50  # Up 50% → never let it become a loss
+
+# Bankroll-based stop
 BANKROLL_LOSS_THRESHOLD: float = 0.02  # 2% of bankroll loss triggers review
+
+# Auto profit-take (no Claude needed)
+AUTO_PROFIT_TAKE_PCT: float = 2.00  # 200% gain → auto-sell, lock it in
 
 
 class PositionMonitor:
@@ -67,6 +78,8 @@ class PositionMonitor:
         self._analyzer = analyzer
         self._alerter = alerter
         self._running: bool = False
+        # Track the highest price each position has reached (for trailing stop)
+        self._peak_prices: dict[str, Decimal] = {}
 
     async def _get_current_price(self, ticker: str, side: str) -> Decimal | None:
         """
@@ -103,12 +116,13 @@ class PositionMonitor:
         """
         Evaluate whether a position should be held or exited.
 
-        Returns a dict with:
-        - action: "hold" or "sell"
-        - current_price: current market price
-        - unrealized_pnl: dollar P&L
-        - pnl_pct: percentage P&L
-        - reason: explanation
+        Uses a TRAILING STOP-LOSS that ratchets up as the position profits:
+        1. Initial stop: sell if down 50% from entry
+        2. Once up 50%: floor moves to entry (never let a winner become a loser)
+        3. Trailing stop: sell if price drops 25% from its peak
+        4. Auto-take: sell if up 200% (lock in the bag)
+
+        Returns a dict with action, current_price, unrealized_pnl, pnl_pct, reason.
         """
         current_price = await self._get_current_price(
             position.kalshi_ticker, position.side
@@ -120,48 +134,126 @@ class PositionMonitor:
                 "current_price": None,
                 "unrealized_pnl": Decimal("0"),
                 "pnl_pct": 0.0,
-                "reason": "Cannot fetch current price — holding.",
+                "reason": "Cannot fetch current price -- holding.",
             }
 
-        # Calculate unrealized P&L
+        # Calculate P&L
         entry_price = position.avg_price
         quantity = position.quantity
-
-        if position.side == "yes":
-            # Bought YES at entry_price, current value is current_price
-            pnl_per_contract = current_price - entry_price
-        else:
-            # Bought NO at entry_price, current value is current_price
-            pnl_per_contract = current_price - entry_price
-
+        pnl_per_contract = current_price - entry_price
         unrealized_pnl = pnl_per_contract * quantity
         pnl_pct = float(pnl_per_contract / entry_price) if entry_price > 0 else 0.0
+
+        # Update peak price tracking
+        ticker = position.kalshi_ticker
+        prev_peak = self._peak_prices.get(ticker, entry_price)
+        if current_price > prev_peak:
+            self._peak_prices[ticker] = current_price
+        peak_price = self._peak_prices.get(ticker, entry_price)
+
+        # Calculate drop from peak
+        drop_from_peak = float((peak_price - current_price) / peak_price) if peak_price > 0 else 0.0
 
         bankroll = self._cache.get_bankroll()
         bankroll_loss_pct = (
             float(abs(unrealized_pnl) / bankroll) if bankroll > 0 and unrealized_pnl < 0 else 0.0
         )
 
-        # Check stop-loss triggers
-        should_review = False
-        trigger_reason = ""
-
-        if pnl_pct < -PRICE_MOVE_THRESHOLD:
-            should_review = True
-            trigger_reason = f"Price moved {pnl_pct:.0%} against position (threshold: {-PRICE_MOVE_THRESHOLD:.0%})"
-
-        if bankroll_loss_pct > BANKROLL_LOSS_THRESHOLD:
-            should_review = True
-            trigger_reason = f"Unrealized loss is {bankroll_loss_pct:.1%} of bankroll (threshold: {BANKROLL_LOSS_THRESHOLD:.0%})"
-
-        if not should_review:
+        # === RULE 1: AUTO PROFIT-TAKE at 200% gain ===
+        if pnl_pct >= AUTO_PROFIT_TAKE_PCT:
+            console.print(
+                f"[green]AUTO PROFIT TAKE: {ticker} up {pnl_pct:+.0%}! "
+                f"Selling to lock in ${unrealized_pnl:+.2f}.[/green]"
+            )
             return {
-                "action": "hold",
+                "action": "sell",
                 "current_price": current_price,
                 "unrealized_pnl": unrealized_pnl,
                 "pnl_pct": pnl_pct,
-                "reason": f"Within thresholds. P&L: {pnl_pct:+.0%} (${unrealized_pnl:+.2f})",
+                "reason": f"Auto profit-take: up {pnl_pct:+.0%} (${unrealized_pnl:+.2f}).",
             }
+
+        # === RULE 2: TRAILING STOP from peak ===
+        # Only active once position has been profitable
+        if peak_price > entry_price and drop_from_peak >= TRAILING_STOP_PCT:
+            # Calculate how much profit we're locking in
+            locked_pnl = (current_price - entry_price) * quantity
+            console.print(
+                f"[yellow]TRAILING STOP: {ticker} dropped {drop_from_peak:.0%} from "
+                f"peak ${peak_price}. Selling at ${current_price} to lock in "
+                f"${locked_pnl:+.2f}.[/yellow]"
+            )
+            return {
+                "action": "sell",
+                "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl,
+                "pnl_pct": pnl_pct,
+                "reason": f"Trailing stop: {drop_from_peak:.0%} drop from peak ${peak_price}. Locking in ${locked_pnl:+.2f}.",
+            }
+
+        # === RULE 3: BREAKEVEN LOCK ===
+        # Once position was up 50%+, never let it become a loss
+        peak_pnl_pct = float((peak_price - entry_price) / entry_price) if entry_price > 0 else 0.0
+        if peak_pnl_pct >= BREAKEVEN_LOCK_PCT and current_price <= entry_price:
+            console.print(
+                f"[yellow]BREAKEVEN LOCK: {ticker} was up {peak_pnl_pct:+.0%} "
+                f"(peak ${peak_price}), now back to entry. "
+                f"Selling to preserve capital.[/yellow]"
+            )
+            return {
+                "action": "sell",
+                "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl,
+                "pnl_pct": pnl_pct,
+                "reason": f"Breakeven lock: was up {peak_pnl_pct:+.0%}, now at entry. Preserving capital.",
+            }
+
+        # === RULE 4: INITIAL STOP-LOSS (from entry) ===
+        if pnl_pct <= -INITIAL_STOP_LOSS_PCT:
+            console.print(
+                f"[red]STOP-LOSS: {ticker} down {pnl_pct:+.0%} from entry. "
+                f"Asking Claude: exit or hold?[/red]"
+            )
+            try:
+                decision = await self._ask_claude_about_exit(
+                    position, current_price, unrealized_pnl,
+                    f"Down {pnl_pct:.0%} from entry (threshold: {-INITIAL_STOP_LOSS_PCT:.0%})",
+                )
+                return {
+                    "action": decision,
+                    "current_price": current_price,
+                    "unrealized_pnl": unrealized_pnl,
+                    "pnl_pct": pnl_pct,
+                    "reason": f"Stop-loss review: down {pnl_pct:+.0%}. Claude says {decision}.",
+                }
+            except Exception:
+                return {
+                    "action": "sell",
+                    "current_price": current_price,
+                    "unrealized_pnl": unrealized_pnl,
+                    "pnl_pct": pnl_pct,
+                    "reason": f"Stop-loss (Claude unavailable): down {pnl_pct:+.0%}.",
+                }
+
+        # === RULE 5: BANKROLL PROTECTION ===
+        if bankroll_loss_pct > BANKROLL_LOSS_THRESHOLD:
+            return {
+                "action": "sell",
+                "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl,
+                "pnl_pct": pnl_pct,
+                "reason": f"Bankroll protection: loss is {bankroll_loss_pct:.1%} of bankroll.",
+            }
+
+        # === ALL CLEAR — HOLD ===
+        peak_info = f" | Peak=${peak_price}" if peak_price > entry_price else ""
+        return {
+            "action": "hold",
+            "current_price": current_price,
+            "unrealized_pnl": unrealized_pnl,
+            "pnl_pct": pnl_pct,
+            "reason": f"Holding. P&L: {pnl_pct:+.0%} (${unrealized_pnl:+.2f}){peak_info}",
+        }
 
         # Position triggered a review — ask Claude
         console.print(
@@ -259,23 +351,30 @@ Respond with EXACTLY one word: SELL or HOLD"""
         )
 
         if result is not None:
-            # Remove from cache
+            # Remove from cache and peak tracking
             self._cache.remove_position(position.kalshi_ticker)
+            self._peak_prices.pop(position.kalshi_ticker, None)
 
             # Send Discord alert
             try:
-                await self._alerter.send_error_alert(
-                    component="STOP-LOSS EXIT",
-                    detail=f"{position.side.upper()} x{position.quantity} on {position.kalshi_ticker} @ ${current_price}",
-                    status=reason,
+                pnl = (current_price - position.avg_price) * position.quantity
+                color_word = "PROFIT" if pnl >= 0 else "LOSS"
+                await self._alerter.send_trade_alert(
+                    ticker=position.kalshi_ticker,
+                    side=f"SELL {position.side}",
+                    price=current_price,
+                    bet_amount=abs(pnl),
+                    bankroll_pct=0.0,
+                    rationale=f"{color_word}: {reason}",
+                    bankroll=self._cache.get_bankroll() + (current_price * position.quantity),
                 )
             except Exception:
                 pass
 
-            console.print(f"[red]Position exited successfully.[/red]")
+            console.print(f"[green]Position exited successfully.[/green]")
             return True
         else:
-            console.print(f"[red]Exit order failed — position still open.[/red]")
+            console.print(f"[red]Exit order failed -- position still open.[/red]")
             return False
 
     async def _check_cycle(self) -> None:
