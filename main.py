@@ -159,6 +159,8 @@ class EdgeRunner:
         self._starting_bankroll: Decimal = Decimal("0")
         # Track when the agent started (for midnight cutoff logic)
         self._start_time: float = time.monotonic()
+        # Shutdown reason (set by auto-shutdown or Ctrl+C)
+        self._shutdown_reason: str = "Unknown"
         self._running: bool = False
         # Track last analyzed price and time per ticker to avoid redundant Claude calls
         self._last_analyzed_price: dict[str, Decimal] = {}
@@ -614,8 +616,8 @@ class EdgeRunner:
             f"Players={len(DEFAULT_TRACKED_PLAYERS)}[/green]"
         )
 
-    async def _shutdown(self) -> None:
-        """Gracefully shut down all modules."""
+    async def _shutdown(self, reason: str = "Manual stop") -> None:
+        """Gracefully shut down all modules and send session summary."""
         console.print("\n[yellow]EdgeRunner: Shutting down...[/yellow]")
         self._running = False
 
@@ -625,24 +627,59 @@ class EdgeRunner:
         await self._nba_poller.stop()
         await self._smart_money.stop()
         await self._position_monitor.stop()
-        await self._kalshi_client.close()
 
-        # Send shutdown alert
-        await self._alerter.send_shutdown("Manual stop (Ctrl+C)")
-        await self._alerter.close()
+        # Sync final bankroll from Kalshi for accurate reporting
+        try:
+            await self._order_manager.sync_bankroll(self._cache)
+        except Exception:
+            pass
 
-        # Print final status
+        # Build session summary
         analyzer_status = self._analyzer.get_status()
         order_status = self._order_manager.get_status()
+        final_bankroll = self._cache.get_bankroll()
+        pnl = final_bankroll - self._starting_bankroll
+        pnl_pct = float(pnl / self._starting_bankroll * 100) if self._starting_bankroll > 0 else 0.0
+        uptime_min = (time.monotonic() - self._start_time) / 60
+        open_positions = self._cache.get_position_count()
 
-        console.print("\n[bold]Final Status:[/bold]")
-        console.print(f"  Bankroll: ${self._cache.get_bankroll()}")
-        console.print(f"  Positions: {self._cache.get_position_count()}")
-        console.print(f"  Trades executed: {order_status['total_executions']}")
-        console.print(f"  Trades rejected: {order_status['total_rejections']}")
-        console.print(f"  Claude calls: {analyzer_status['total_calls']}")
-        console.print(f"  Claude cost: ${analyzer_status['cumulative_cost']:.4f}")
-        console.print(f"  Cache hit rate: {analyzer_status['cache_rate_pct']:.0f}%")
+        # Print to terminal
+        console.print("\n[bold]SESSION SUMMARY[/bold]")
+        console.print(f"  Starting Bankroll: ${self._starting_bankroll}")
+        console.print(f"  Final Bankroll:    ${final_bankroll}")
+        pnl_color = "green" if pnl >= 0 else "red"
+        console.print(f"  [{pnl_color}]Session P&L:       ${pnl:+.2f} ({pnl_pct:+.1f}%)[/{pnl_color}]")
+        console.print(f"  Trades Executed:   {order_status['total_executions']}")
+        console.print(f"  Trades Rejected:   {order_status['total_rejections']}")
+        console.print(f"  Open Positions:    {open_positions}")
+        console.print(f"  Claude API Calls:  {analyzer_status['total_calls']}")
+        console.print(f"  Claude API Cost:   ${analyzer_status['cumulative_cost']:.4f}")
+        console.print(f"  Cache Hit Rate:    {analyzer_status['cache_rate_pct']:.0f}%")
+        console.print(f"  Session Duration:  {uptime_min:.0f} minutes")
+        console.print(f"  Shutdown Reason:   {reason}")
+
+        # Send session summary to Discord
+        try:
+            await self._alerter.send_daily_summary(
+                trades_executed=order_status["total_executions"],
+                wins=0,  # TODO: track wins/losses in order_manager
+                losses=0,
+                day_pnl=pnl,
+                bankroll=final_bankroll,
+                avg_clv=0.0,
+                avg_latency_ms=0,
+                api_cost=analyzer_status["cumulative_cost"],
+            )
+            await self._alerter.send_shutdown(
+                f"{reason} | P&L: ${pnl:+.2f} ({pnl_pct:+.1f}%) | "
+                f"{order_status['total_executions']} trades | "
+                f"${self._starting_bankroll} -> ${final_bankroll}"
+            )
+        except Exception:
+            pass
+
+        await self._kalshi_client.close()
+        await self._alerter.close()
 
         console.print("[green]EdgeRunner: Shutdown complete.[/green]")
 
@@ -676,7 +713,7 @@ class EdgeRunner:
         except asyncio.CancelledError:
             pass
         finally:
-            await self._shutdown()
+            await self._shutdown(self._shutdown_reason)
 
     async def _auto_shutdown_timer(self) -> None:
         """
@@ -731,11 +768,13 @@ class EdgeRunner:
                 # Midnight cutoff: trigger if it's after midnight AND agent has run 1+ hour
                 if local_now.hour == 0 and agent_uptime > 3600:
                     console.print("[yellow]Auto-shutdown: Midnight cutoff reached.[/yellow]")
+                    self._shutdown_reason = "Midnight cutoff"
                     break
             elif local_now.hour >= hard_cutoff_hour:
                 console.print(
                     f"[yellow]Auto-shutdown: Hard cutoff {hard_cutoff_hour}:00 reached.[/yellow]"
                 )
+                self._shutdown_reason = f"Hard cutoff ({hard_cutoff_hour}:00)"
                 break
 
             # Check if we've passed the last game's end time + buffer
@@ -752,6 +791,7 @@ class EdgeRunner:
                         "[yellow]Auto-shutdown: All games ended and no open positions. "
                         "Shutting down...[/yellow]"
                     )
+                    self._shutdown_reason = "All games ended"
                     break
 
             # Check if any tracked markets still have activity
@@ -812,7 +852,7 @@ def main() -> None:
         loop.run_until_complete(agent.run())
     except KeyboardInterrupt:
         console.print("\n[yellow]KeyboardInterrupt. Cleaning up...[/yellow]")
-        loop.run_until_complete(agent._shutdown())
+        loop.run_until_complete(agent._shutdown("Manual stop (Ctrl+C)"))
     finally:
         loop.close()
 
