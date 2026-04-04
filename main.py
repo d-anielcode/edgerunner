@@ -108,37 +108,41 @@ def _get_game_outcome_direction(ticker: str, action: str) -> str | None:
 
     Returns the team abbreviation the agent is betting on, or None.
 
-    Logic:
-    - BUY_YES on NOP ticker → betting NOP wins
-    - BUY_NO on NOP ticker → betting NOP loses → other team wins
-    - BUY_YES on SAC ticker → betting SAC wins
-    - BUY_NO on SAC ticker → betting SAC loses → other team wins
+    Handles multiple ticker formats:
+    - KXNBAGAME-26APR03NOPSAC-NOP          → team is NOP (3rd segment)
+    - KXNBASPREAD-26APR03NOPSAC-SAC7       → team is SAC (3rd segment, strip numbers)
+    - KXNBAPTS-26APR04WASMIA-WASTJOHNSON12-20 → team is WAS (3rd segment, first 3 chars)
     """
+    import re
+
     game_id = _extract_game_id(ticker)
     if not game_id:
         return None
 
-    # The last part of the ticker after the game ID is the team
-    # e.g., KXNBAGAME-26APR03NOPSAC-NOP → team is NOP
     ticker_upper = ticker.upper()
     parts = ticker_upper.split("-")
     if len(parts) < 3:
         return None
 
-    # Team is in the last segment (may have numbers for spreads: ORL7 → ORL)
-    import re
-    team_match = re.match(r"([A-Z]{2,3})", parts[-1])
+    # Extract team from the THIRD segment (parts[2]), not the last
+    # This works for all formats:
+    #   NOP, SAC7, WASTJOHNSON12 → first 2-3 alpha chars = team
+    team_match = re.match(r"([A-Z]{2,3})", parts[2])
     if not team_match:
         return None
     team = team_match.group(1)
 
-    # Other team is the other 3 letters from game_id
+    # Verify the team is actually in the game_id
+    if team not in game_id:
+        return None
+
+    # Other team is the remaining 3 letters from game_id
     other_team = game_id.replace(team, "", 1) if team in game_id else None
 
     if action == "BUY_YES":
-        return team  # Betting this team wins/covers
+        return team
     elif action == "BUY_NO":
-        return other_team  # Betting this team loses → other team wins
+        return other_team
 
     return None
 
