@@ -690,17 +690,29 @@ class EdgeRunner:
                         volume = float(m.get("volume_fp", "0"))
 
                         if ticker and title:
-                            # Be SELECTIVE about what we track to avoid queue overflow
-                            # Game winners: always track (most liquid, best for analysis)
-                            # Spreads: only track if meaningful volume (>1000)
-                            # Player props: only track high-volume props (>500)
+                            # Only track markets expiring within 12 hours (today's games)
+                            exp_time = m.get("expected_expiration_time", m.get("close_time"))
+                            expires_today = False
+                            if exp_time:
+                                try:
+                                    from datetime import timedelta
+                                    exp_dt = datetime.fromisoformat(exp_time.replace("Z", "+00:00"))
+                                    hours_until = (exp_dt - datetime.now(timezone.utc)).total_seconds() / 3600
+                                    expires_today = 0 < hours_until < 12
+                                except (ValueError, TypeError):
+                                    pass
+
+                            if not expires_today:
+                                continue  # Skip markets not happening today
+
+                            # Within today's games, be selective by volume
                             should_track = False
                             if prefix == "KXNBAGAME":
-                                should_track = True  # Always track game winners
-                            elif prefix == "KXNBASPREAD" and volume > 1000:
-                                should_track = True  # Only liquid spreads
-                            elif prefix == "KXNBAPTS" and volume > 500:
-                                should_track = True  # Only popular player props
+                                should_track = True
+                            elif prefix == "KXNBASPREAD" and volume > 500:
+                                should_track = True
+                            elif prefix == "KXNBAPTS" and volume > 100:
+                                should_track = True
 
                             if should_track:
                                 discovered_tickers.append(ticker)
