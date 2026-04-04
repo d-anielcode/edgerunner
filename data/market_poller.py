@@ -57,32 +57,46 @@ class MarketPoller:
 
     async def _poll_market(self, ticker: str) -> None:
         """
-        Fetch a single market's price data via REST and push to queue.
+        Fetch a single market's orderbook via REST and push to queue.
 
-        Extracts yes_bid, yes_ask, and sizes from the market response.
+        Uses the /markets/{ticker}/orderbook endpoint which returns the
+        full depth (yes and no side arrays of [price, size] pairs).
+        The /markets/{ticker} metadata endpoint does NOT reliably return
+        real-time bid/ask on production.
         """
-        market = await self._kalshi.get_market(ticker)
-        if market is None:
+        try:
+            orderbook_data = await self._kalshi._request_with_retry(
+                "GET", f"/markets/{ticker}/orderbook"
+            )
+        except Exception:
             return
 
-        # Extract price data — Kalshi returns dollar strings
-        yes_bid_str = market.get("yes_bid_dollars", market.get("yes_bid"))
-        yes_ask_str = market.get("yes_ask_dollars", market.get("yes_ask"))
-        yes_bid_size = market.get("yes_bid_size_fp", market.get("yes_bid_size", "0"))
-        yes_ask_size = market.get("yes_ask_size_fp", market.get("yes_ask_size", "0"))
-
-        if not yes_bid_str and not yes_ask_str:
+        if not orderbook_data:
             return
 
-        best_bid = Decimal(str(yes_bid_str)) if yes_bid_str else None
-        best_ask = Decimal(str(yes_ask_str)) if yes_ask_str else None
-        bid_volume = Decimal(str(yes_bid_size)) if yes_bid_size else Decimal("0")
-        ask_volume = Decimal(str(yes_ask_size)) if yes_ask_size else Decimal("0")
+        ob = orderbook_data.get("orderbook_fp", orderbook_data.get("orderbook", {}))
+        if not ob:
+            return
 
-        # Skip if no meaningful price data
+        # Kalshi orderbook format:
+        # "yes_dollars": [[price_str, size_str], ...] sorted LOW to HIGH
+        # "no_dollars": [[price_str, size_str], ...] sorted LOW to HIGH
+        # Best YES bid = HIGHEST yes price (LAST element)
+        # Best YES ask = 1 - HIGHEST no price (LAST element of no side)
+        yes_levels = ob.get("yes_dollars", ob.get("yes", []))
+        no_levels = ob.get("no_dollars", ob.get("no", []))
+
+        # Best YES bid = highest price on yes side (last element, since sorted low→high)
+        best_bid = Decimal(yes_levels[-1][0]) if yes_levels else None
+        bid_volume = Decimal(str(sum(float(level[1]) for level in yes_levels[-5:]))) if yes_levels else Decimal("0")
+
+        # Best YES ask = 1 - highest no bid (last element of no side)
+        # If someone bids $0.28 for NO, that's asking $0.72 for YES
+        best_ask = (Decimal("1") - Decimal(no_levels[-1][0])) if no_levels else None
+        ask_volume = Decimal(str(sum(float(level[1]) for level in no_levels[-5:]))) if no_levels else Decimal("0")
+
+        # Skip if no meaningful data
         if best_bid is None and best_ask is None:
-            return
-        if best_bid == Decimal("0") and best_ask == Decimal("0"):
             return
 
         # Update cache (computes OFI) and push to queue
