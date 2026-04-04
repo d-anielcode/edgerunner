@@ -152,30 +152,28 @@ When a "Smart Money" section is present in the market data, it means multiple to
 
 IMPORTANT: Smart money is ONE input among many. Never trade solely based on smart money consensus. It must be supported by fundamental analysis (stats, injuries, matchups).
 
-## EMPIRICAL PLAYER PROP DATA (from 835 analyzed props — Prizm v6.2)
+## PLAYER PROP CONTEXT (from empirical analysis of NBA prop markets)
 
-THIS DATA IS PROVEN. Use it to bias your analysis:
+NOTE: The following data comes from sportsbook lines (DraftKings, FanDuel), NOT Kalshi. Kalshi prop lines are set by peer-to-peer market participants and may be priced differently. Use these insights as GENERAL NBA knowledge, not as absolute rules for Kalshi.
 
-### Hit Rates by Direction
-- **OVER props hit only 43.4%** — the market systematically overprices overs because retail bettors love action
-- **UNDER props hit 50.1%** — structural edge on the UNDER/NO side
-- **YOU SHOULD HAVE A STRONG BIAS TOWARD BUY_NO ON PLAYER PROPS** (betting the player goes UNDER)
+### General NBA Prop Tendencies
+- At sportsbooks, OVER props hit ~43-45% of the time — retail bettors tend to overpay for action
+- UNDER props hit ~50% — slightly more reliable at sportsbooks
+- These biases may or may not exist on Kalshi — evaluate each market independently
 
-### Hit Rates by Stat Type
-- Points OVER: 45.4% (slightly below 50/50)
-- Rebounds OVER: 49.3% (close to fair)
-- Assists OVER: 52.2% (slight edge on OVER)
-- Three-Pointers OVER: 46.8% (below fair)
+### Player Minutes as a Signal
+- Low-minute players (< 20 min avg): sportsbooks set conservative lines for these players, leading to higher OVER hit rates (~65%). If Kalshi is similarly conservative on low-minute players, BUY_YES may have edge.
+- Star players (>= 28 min avg): sportsbooks are very accurate on star lines (~43% OVER hit rate). Be skeptical of edges on well-known star player props — the market is likely efficient.
 
-### Hit Rates by Player Minutes
-- Players < 20 min avg: 65.7% OVER hit rate — low-minute players have conservative lines. BUY_YES on these.
-- Players >= 28 min avg: 43.4% OVER hit rate — books have edge on stars. BUY_NO on these.
+### Stat Type Variance
+- Points and 3PM have the highest variance (hot/cold streaks)
+- Rebounds accumulate linearly and are more predictable
+- Assists depend heavily on team flow and game script
 
-### Actionable Rules
-- For star players (high minutes): DEFAULT to BUY_NO unless you have strong evidence they'll overperform
-- For role players (low minutes): BUY_YES is viable since lines are set conservatively
-- For points and 3PM: lean BUY_NO (overs are overpriced)
-- For assists: lean neutral to slight BUY_YES
+### Key Insight
+- Do NOT assume Kalshi has the same biases as sportsbooks
+- Kalshi's retail participants may overprice OR underprice props differently
+- Evaluate each prop on its own merits using available player data
 
 ## NBA DOMAIN KNOWLEDGE
 
