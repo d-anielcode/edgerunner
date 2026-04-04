@@ -80,6 +80,7 @@ class PositionMonitor:
         self._running: bool = False
         # Track the highest price each position has reached (for trailing stop)
         self._peak_prices: dict[str, Decimal] = {}
+        self._peak_lock = asyncio.Lock()
         # Track positions we've exited (ticker → exit details) for re-entry logic
         self._exited_positions: dict[str, dict] = {}
 
@@ -146,12 +147,13 @@ class PositionMonitor:
         unrealized_pnl = pnl_per_contract * quantity
         pnl_pct = float(pnl_per_contract / entry_price) if entry_price > 0 else 0.0
 
-        # Update peak price tracking
+        # Update peak price tracking (locked for concurrent safety)
         ticker = position.kalshi_ticker
-        prev_peak = self._peak_prices.get(ticker, entry_price)
-        if current_price > prev_peak:
-            self._peak_prices[ticker] = current_price
-        peak_price = self._peak_prices.get(ticker, entry_price)
+        async with self._peak_lock:
+            prev_peak = self._peak_prices.get(ticker, entry_price)
+            if current_price > prev_peak:
+                self._peak_prices[ticker] = current_price
+            peak_price = self._peak_prices.get(ticker, entry_price)
 
         # Calculate drop from peak
         drop_from_peak = float((peak_price - current_price) / peak_price) if peak_price > 0 else 0.0
@@ -257,33 +259,6 @@ class PositionMonitor:
             "reason": f"Holding. P&L: {pnl_pct:+.0%} (${unrealized_pnl:+.2f}){peak_info}",
         }
 
-        # Position triggered a review — ask Claude
-        console.print(
-            f"[yellow]Position review triggered: {position.kalshi_ticker} | "
-            f"Entry=${entry_price} Current=${current_price} | "
-            f"P&L: {pnl_pct:+.0%} (${unrealized_pnl:+.2f}) | {trigger_reason}[/yellow]"
-        )
-
-        # Use Claude to decide (if analyzer is available)
-        try:
-            decision = await self._ask_claude_about_exit(position, current_price, unrealized_pnl, trigger_reason)
-            return {
-                "action": decision,
-                "current_price": current_price,
-                "unrealized_pnl": unrealized_pnl,
-                "pnl_pct": pnl_pct,
-                "reason": trigger_reason,
-            }
-        except Exception as e:
-            console.print(f"[red]Claude exit review failed: {e} — defaulting to SELL[/red]")
-            return {
-                "action": "sell",
-                "current_price": current_price,
-                "unrealized_pnl": unrealized_pnl,
-                "pnl_pct": pnl_pct,
-                "reason": f"Claude unavailable, auto-exiting on stop-loss: {trigger_reason}",
-            }
-
     async def _ask_claude_about_exit(
         self,
         position: Position,
@@ -324,7 +299,7 @@ Respond with EXACTLY one word: SELL or HOLD"""
 
         try:
             response = await client.messages.create(
-                model="claude-haiku-4-5",
+                model="claude-haiku-4-5",  # TODO: import MODEL_ID from analyzer
                 max_tokens=10,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -497,7 +472,7 @@ Respond with EXACTLY one word: SELL or HOLD"""
         self._running = True
         console.print(
             f"[blue]Position Monitor: Started (interval={POSITION_CHECK_INTERVAL}s, "
-            f"stop-loss={PRICE_MOVE_THRESHOLD:.0%} price / "
+            f"initial-stop={INITIAL_STOP_LOSS_PCT:.0%} / trailing={TRAILING_STOP_PCT:.0%} / "
             f"{BANKROLL_LOSS_THRESHOLD:.0%} bankroll).[/blue]"
         )
 

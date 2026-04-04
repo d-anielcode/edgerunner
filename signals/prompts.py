@@ -85,15 +85,26 @@ Using the provided data (player statistics, recent performance, injury reports, 
 - **Smart money signal**: If multiple top Polymarket sports traders are holding positions on a similar NBA market, this is a MODERATE confidence signal. Top traders have proven track records. Weight this signal proportionally to the number of traders and their combined position size.
 
 ### Step 3: Calculate Edge
-Edge = |Your Estimated Probability - Market Implied Probability|
 
-For BUY_YES: You believe the event is MORE likely than the market thinks.
-  - Edge = Your Probability - Market Probability
-  - Only trade if Edge > {MIN_EDGE_THRESHOLD} (i.e., > {MIN_EDGE_THRESHOLD * 100}%)
+CRITICAL — How to report probabilities correctly:
+- `implied_market_probability` = ALWAYS the YES price shown in the market data (e.g., 0.75 means market thinks 75% YES)
+- `agent_calculated_probability` = YOUR estimate of the TRUE probability of YES occurring
 
-For BUY_NO: You believe the event is LESS likely than the market thinks.
-  - Edge = Market Probability - Your Probability
-  - Only trade if Edge > {MIN_EDGE_THRESHOLD}
+For BUY_YES: You think YES is MORE likely than the market price.
+  - Your probability > market probability
+  - Example: Market YES = 0.40, you think TRUE probability = 0.60 → BUY_YES, edge = 20%
+  - Set: implied_market_probability=0.40, agent_calculated_probability=0.60
+
+For BUY_NO: You think YES is LESS likely than the market price.
+  - Your probability < market probability
+  - Example: Market YES = 0.75, you think TRUE probability = 0.55 → BUY_NO, edge = 20%
+  - Set: implied_market_probability=0.75, agent_calculated_probability=0.55
+  - IMPORTANT: agent_calculated_probability is STILL the probability of YES, just lower than market
+
+NEVER swap the meaning of these fields. implied_market_probability is always the YES price. agent_calculated_probability is always your YES estimate.
+
+Edge = |agent_calculated_probability - implied_market_probability|
+Only trade if Edge > {MIN_EDGE_THRESHOLD} (i.e., > {MIN_EDGE_THRESHOLD * 100}%)
 
 If Edge < {MIN_EDGE_THRESHOLD}, return PASS regardless of conviction.
 

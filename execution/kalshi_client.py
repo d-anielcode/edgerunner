@@ -76,6 +76,11 @@ class KalshiClient:
         self._api_key_id = KALSHI_API_KEY_ID
         self._key_path = KALSHI_PRIVATE_KEY_PATH
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
+        # Cache RSA private key in memory (loaded once, not on every request)
+        self._private_key = None
+        if self._key_path.is_file():
+            key_data = self._key_path.read_bytes()
+            self._private_key = serialization.load_pem_private_key(key_data, password=None)
 
     # --- RSA-PSS Authentication ---
 
@@ -89,12 +94,10 @@ class KalshiClient:
           - method is uppercase (GET, POST, etc.)
           - full_path includes /trade-api/v2 prefix (e.g., /trade-api/v2/portfolio/balance)
           - query parameters are stripped before signing
-
-        The private key is loaded from disk on each call. This avoids
-        keeping key material in memory longer than necessary.
         """
-        key_data = self._key_path.read_bytes()
-        private_key = serialization.load_pem_private_key(key_data, password=None)
+        if self._private_key is None:
+            raise RuntimeError("RSA private key not loaded. Check KALSHI_PRIVATE_KEY_PATH.")
+        private_key = self._private_key
 
         # Strip query params — Kalshi signs only the path portion
         path_without_query = path.split("?")[0]
@@ -206,6 +209,11 @@ class KalshiClient:
         IMPORTANT: Prices must be fixed-point dollar strings ("0.6500").
         Kalshi rejects requests with float prices.
         """
+        # Validate price is in valid range
+        if not (Decimal("0.01") <= price <= Decimal("0.99")):
+            console.print(f"[red]Invalid price ${price} — must be $0.01-$0.99.[/red]")
+            return None
+
         # Convert price from dollars (Decimal) to cents (integer)
         # Kalshi expects price as integer cents (1-99), not dollar strings
         price_cents = int(price * 100)

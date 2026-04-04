@@ -284,7 +284,14 @@ class EdgeRunner:
         last_time = self._last_analyzed_time.get(update.ticker, 0.0)
         time_since = time.monotonic() - last_time
 
-        price_changed = abs(current_price - last_price) >= self._min_price_change
+        # Use percentage-based threshold (2% relative change) instead of absolute
+        # This catches small but significant moves on cheap contracts
+        if last_price > 0 and current_price > 0:
+            pct_change = abs(current_price - last_price) / last_price
+            price_changed = pct_change >= Decimal("0.02")
+        else:
+            price_changed = abs(current_price - last_price) >= self._min_price_change
+
         analysis_stale = time_since >= self._max_stale_analysis
 
         if not price_changed and not analysis_stale:
@@ -337,20 +344,16 @@ class EdgeRunner:
         if not decision.is_actionable:
             return
 
-        # Fix: Claude sometimes flips probabilities on BUY_NO.
-        # If BUY_NO but agent_prob > market_prob, Claude meant the opposite.
-        # Swap them so Kelly calculates correctly.
+        # Validate: for BUY_NO, agent_prob should be < market_prob
+        # If Claude got it backwards, log and skip (don't trade on confused signal)
         if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
-            from signals.schemas import TradeDecision as TD
-            decision = TD(
-                action=decision.action,
-                target_market_id=decision.target_market_id,
-                implied_market_probability=decision.agent_calculated_probability,
-                agent_calculated_probability=decision.implied_market_probability,
-                kelly_fraction=decision.kelly_fraction,
-                confidence_score=decision.confidence_score,
-                rationale=decision.rationale,
+            console.print(
+                f"[yellow]SKIPPED: Claude returned BUY_NO but agent_prob "
+                f"({decision.agent_calculated_probability:.2f}) > market_prob "
+                f"({decision.implied_market_probability:.2f}). "
+                f"Inconsistent signal — PASSing.[/yellow]"
             )
+            return
 
         # DUPLICATE EXPOSURE CHECK: Don't bet the same direction on the same game twice
         game_id = _extract_game_id(update.ticker)
