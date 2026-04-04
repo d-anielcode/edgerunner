@@ -52,6 +52,7 @@ from data.nba_poller import NbaPoller
 from data.smart_money import SmartMoneyTracker
 from execution.kalshi_client import KalshiClient
 from execution.order_manager import OrderManager
+from execution.arbitrage import ArbitrageScanner
 from execution.position_monitor import PositionMonitor
 from signals.analyzer import MarketAnalyzer
 
@@ -208,6 +209,10 @@ class EdgeRunner:
             kalshi_client=self._kalshi_client,
             cache=self._cache,
             analyzer=self._analyzer,
+            alerter=self._alerter,
+        )
+        self._arb_scanner: ArbitrageScanner = ArbitrageScanner(
+            kalshi_client=self._kalshi_client,
             alerter=self._alerter,
         )
 
@@ -822,9 +827,10 @@ class EdgeRunner:
         DEFAULT_TRACKED_TICKERS.extend(discovered_tickers)
         self._market_titles = discovered_titles
 
-        # Update the feed and market poller with discovered tickers
+        # Update the feed, market poller, and arb scanner with discovered tickers
         self._feed._tracked_tickers = discovered_tickers
         self._market_poller._tracked_tickers = discovered_tickers
+        self._arb_scanner.update_tickers(discovered_tickers)
 
         # Extract player names from player prop titles for the NBA poller
         import re
@@ -911,6 +917,7 @@ class EdgeRunner:
         await self._nba_poller.stop()
         await self._smart_money.stop()
         await self._position_monitor.stop()
+        await self._arb_scanner.stop()
 
         # Sync final bankroll from Kalshi for accurate reporting
         try:
@@ -990,6 +997,7 @@ class EdgeRunner:
                 self._smart_money.run(),
                 self._signal_evaluator(),
                 self._position_monitor.run(),
+                self._arb_scanner.run(),
                 self._watchdog(),
                 self._auto_shutdown_timer(),
                 return_exceptions=True,
