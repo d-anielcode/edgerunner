@@ -157,6 +157,8 @@ class EdgeRunner:
         # Track starting bankroll for the session — used to cap max bet size
         # so that profits from earlier trades don't inflate position sizes
         self._starting_bankroll: Decimal = Decimal("0")
+        # Track when the agent started (for midnight cutoff logic)
+        self._start_time: float = time.monotonic()
         self._running: bool = False
         # Track last analyzed price and time per ticker to avoid redundant Claude calls
         self._last_analyzed_price: dict[str, Decimal] = {}
@@ -678,27 +680,31 @@ class EdgeRunner:
 
         Also has a hard cutoff (AUTO_SHUTDOWN_HOUR, default 11 PM) as safety net.
         """
-        hard_cutoff_hour = int(os.getenv("AUTO_SHUTDOWN_HOUR", "23"))
+        hard_cutoff_hour = int(os.getenv("AUTO_SHUTDOWN_HOUR", "0"))  # Midnight (12 AM)
         no_activity_since: float | None = None
         grace_period = 300.0  # 5 minutes after last game ends
 
         # Calculate shutdown target from discovered game times
         game_end = getattr(self, "_latest_game_end", None)
         if game_end:
-            # Add 30 min buffer (games can go to OT, markets settle after final buzzer)
+            # Add 45 min buffer (OT can add 25+ min, plus market settlement)
             from datetime import timedelta
-            shutdown_target = game_end + timedelta(minutes=30)
+            shutdown_target = game_end + timedelta(minutes=45)
+            # Use system local time (respects OS timezone/DST settings automatically)
+            local_end = game_end.astimezone()
             local_target = shutdown_target.astimezone()
+            cutoff_str = "midnight" if hard_cutoff_hour == 0 else f"{hard_cutoff_hour}:00"
             console.print(
-                f"[blue]Auto-shutdown: Last game ends ~{game_end.astimezone().strftime('%I:%M %p')}. "
-                f"Agent will shut down ~{local_target.strftime('%I:%M %p')} "
-                f"(30 min buffer). Hard cutoff: {hard_cutoff_hour}:00.[/blue]"
+                f"[blue]Auto-shutdown: Last game ends ~{local_end.strftime('%I:%M %p %Z')}. "
+                f"Agent will shut down ~{local_target.strftime('%I:%M %p %Z')} "
+                f"(45 min buffer for OT). Hard cutoff: {cutoff_str}.[/blue]"
             )
         else:
             shutdown_target = None
+            cutoff_str = "midnight" if hard_cutoff_hour == 0 else f"{hard_cutoff_hour}:00"
             console.print(
                 f"[blue]Auto-shutdown: No game times found. "
-                f"Hard cutoff: {hard_cutoff_hour}:00.[/blue]"
+                f"Hard cutoff: {cutoff_str}.[/blue]"
             )
 
         # Wait at least 10 minutes before checking (let markets populate)
@@ -709,8 +715,16 @@ class EdgeRunner:
 
             now = datetime.now(timezone.utc)
 
-            # Hard cutoff safety net
-            if datetime.now().hour >= hard_cutoff_hour:
+            # Hard cutoff safety net (midnight = hour 0, so check if past midnight
+            # but only after we've been running for at least 1 hour)
+            local_now = datetime.now()
+            agent_uptime = time.monotonic() - self._start_time
+            if hard_cutoff_hour == 0:
+                # Midnight cutoff: trigger if it's after midnight AND agent has run 1+ hour
+                if local_now.hour == 0 and agent_uptime > 3600:
+                    console.print("[yellow]Auto-shutdown: Midnight cutoff reached.[/yellow]")
+                    break
+            elif local_now.hour >= hard_cutoff_hour:
                 console.print(
                     f"[yellow]Auto-shutdown: Hard cutoff {hard_cutoff_hour}:00 reached.[/yellow]"
                 )
