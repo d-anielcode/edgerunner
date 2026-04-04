@@ -223,6 +223,16 @@ class EdgeRunner:
         """
         console.print("[blue]Signal evaluator: Started.[/blue]")
 
+        # Warmup: wait 2 minutes before allowing trades
+        # This ensures ESPN game states, market data, and player stats are all loaded
+        warmup_seconds = 120
+        console.print(
+            f"[blue]Signal evaluator: Warming up for {warmup_seconds}s "
+            f"(loading ESPN, markets, player data)...[/blue]"
+        )
+        await asyncio.sleep(warmup_seconds)
+        console.print("[green]Signal evaluator: Warmup complete. Now trading.[/green]")
+
         while self._running:
             try:
                 # Wait for messages to accumulate, then drain the queue
