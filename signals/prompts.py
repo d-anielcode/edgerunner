@@ -176,16 +176,18 @@ You MUST respond using the execute_prediction_trade tool for every evaluation. N
 
 ## CRITICAL BEHAVIORAL RULES
 
-1. You are NEVER certain. Even your highest-confidence estimates should rarely exceed 0.85.
-2. When data is insufficient or contradictory, PASS. Preserving capital is always the right call when uncertain.
-3. Do not chase narratives. "LeBron always shows up in big games" is not a valid statistical argument.
+1. You are NEVER 100% certain, but you DO NOT need high confidence to trade. A confidence of 0.40 with a 5%+ edge is TRADEABLE. Only PASS when edge is below {MIN_EDGE_THRESHOLD * 100}%.
+2. DO NOT PASS just because data is limited. Use whatever data you have — season averages, player quality, home/away — and make your best probability estimate. Uncertainty is priced into the Kelly fraction automatically.
+3. Do not chase narratives, but DO use basketball knowledge. Matchup quality, pace, and player talent gaps are valid analytical inputs.
 4. Do not overweight a single data point. One bad game does not negate a season of consistency.
 5. Treat smart money signals as confirmatory evidence, not primary thesis drivers.
 6. If the market seems efficient (price matches your estimate within {MIN_EDGE_THRESHOLD * 100}%), respect the market and PASS.
-7. You are optimizing for LONG-TERM expected value, not individual trade outcomes. A correct PASS is as valuable as a correct trade.
-8. NEVER reject a trade based on bankroll size. The Kelly engine handles position sizing — your job is only to estimate probabilities and edges. Even a $10 bankroll can trade $0.50 positions.
-9. Be AGGRESSIVE in identifying edges. If your probability estimate differs from the market by more than {MIN_EDGE_THRESHOLD * 100}%, that IS an edge — recommend the trade. Let the Kelly engine decide the size.
-10. For BUY_NO opportunities: if the market overprices an event (your probability < market probability), recommend BUY_NO. These are equally valid trades.
+7. You are optimizing for LONG-TERM expected value. But you MUST take trades to generate value — excessive PASSing is just as bad as reckless betting.
+8. NEVER reject a trade based on bankroll size. The Kelly engine handles position sizing. Even a $10 bankroll can trade.
+9. Be AGGRESSIVE in identifying edges. If your probability estimate differs from the market by more than {MIN_EDGE_THRESHOLD * 100}%, that IS an edge — recommend the trade with an appropriate kelly_fraction. Let the risk engine handle the rest.
+10. For BUY_NO opportunities: if the market overprices an event (your probability < market probability), recommend BUY_NO. These are equally valid and often more profitable.
+11. USE YOUR NBA KNOWLEDGE. You know team strengths, player caliber, home court advantage (~3 pts), and matchup dynamics. This IS sufficient data to estimate probabilities within a reasonable range.
+12. AIM TO TRADE 20-30% of markets you evaluate. If you are PASSing on everything, you are being too conservative.
 
 ## WORKED EXAMPLES
 
@@ -251,7 +253,7 @@ Note: These are approximate tier assignments. Actual defensive ratings fluctuate
 3. **Ignoring base rates**: A player who scores Over 25.5 in 60% of games this season has approximately a 60% true probability, not higher just because of a narrative.
 4. **Conflating correlation with causation**: A teammate being OUT doesn't always increase scoring. It may decrease if the player is now the sole focus of the defense.
 5. **Overweighting smart money**: Smart money is a signal, not a guarantee. Top traders can be wrong, especially in small samples.
-6. **Trading on insufficient data**: If you only have season averages and no recent game data, your probability estimate has high uncertainty. PASS is correct when uncertainty is high."""
+6. **Never trading**: If you PASS on every market, you generate zero value. Trade when you see edge, even with imperfect data. The Kelly fraction accounts for uncertainty."""
 
 
 def build_market_context(
@@ -279,18 +281,21 @@ def build_market_context(
     lines.append(f"Ticker: {ticker}")
     lines.append(f"Title: {title}")
 
-    if orderbook:
-        yes_price = orderbook.best_bid if orderbook.best_bid else "N/A"
-        no_price = orderbook.best_ask if orderbook.best_ask else "N/A"
+    if orderbook and orderbook.best_bid is not None:
+        yes_price = orderbook.best_bid
+        # best_ask is the YES ask (what you'd pay to buy YES)
+        yes_ask = orderbook.best_ask if orderbook.best_ask else yes_price + Decimal("0.01")
+        no_price = Decimal("1") - yes_price  # NO implied price
         spread = orderbook.spread
-        spread_str = f"${spread}" if spread is not None else "N/A"
+        spread_str = f"${spread}" if spread is not None else "$0.01"
 
-        lines.append(f"YES Price (Best Bid): ${yes_price}")
-        lines.append(f"NO Price (Best Ask): ${no_price}")
+        lines.append(f"YES Price: ${yes_price} (market implies {float(yes_price)*100:.0f}% probability)")
+        lines.append(f"YES Ask: ${yes_ask} (cost to buy YES)")
+        lines.append(f"NO Price: ${no_price} (cost to buy NO)")
         lines.append(f"Spread: {spread_str}")
         lines.append(f"OFI: {orderbook.ofi:+.3f}")
     else:
-        lines.append("Orderbook: STALE OR UNAVAILABLE — recommend PASS")
+        lines.append("Orderbook: NO PRICE DATA AVAILABLE — recommend PASS")
 
     if time_to_close_min is not None:
         lines.append(f"Time to Close: {time_to_close_min:.0f} minutes")
