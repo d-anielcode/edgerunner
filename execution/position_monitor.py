@@ -417,18 +417,24 @@ Respond with EXACTLY one word: SELL or HOLD"""
         """
         Check if any previously exited positions now offer a better entry.
 
-        Re-entry criteria:
-        - At least 2 minutes since exit (avoid whipsaw)
-        - Current price is at least 30% below our previous entry price
-        - We don't already have a position on this game
+        Re-entry is NOT automatic. We only FLAG the opportunity for Claude
+        to re-evaluate through the normal signal pipeline. Claude decides
+        whether there's actually still edge based on current game state.
+
+        Criteria to even flag:
+        - At least 3 minutes since exit (avoid whipsaw)
+        - Current price is at least 30% below our previous ENTRY price
+        - We don't already hold this ticker
+        - Max 1 re-entry per ticker (don't keep buying the dip forever)
+        - Market must still be open (not near close)
         """
         if not self._exited_positions:
             return
 
-        # Don't re-enter tickers we currently hold
         current_positions = self._cache.get_positions()
-        min_wait = 120.0  # 2 minutes since exit
+        min_wait = 180.0  # 3 minutes since exit (longer than before)
         reentry_discount = 0.30  # Price must be 30% below previous entry
+        max_reentries = 1  # Only re-enter once per ticker per session
 
         expired = []
         for ticker, exit_info in self._exited_positions.items():
@@ -436,13 +442,17 @@ Respond with EXACTLY one word: SELL or HOLD"""
             if ticker in current_positions:
                 continue
 
+            # Skip if already re-entered this ticker before
+            if exit_info.get("reentry_count", 0) >= max_reentries:
+                continue
+
             # Skip if exited too recently
             time_since_exit = time.monotonic() - exit_info["exit_time"]
             if time_since_exit < min_wait:
                 continue
 
-            # Expire old exits (>30 min — market has likely changed too much)
-            if time_since_exit > 1800:
+            # Expire old exits (>20 min — game state has changed too much)
+            if time_since_exit > 1200:
                 expired.append(ticker)
                 continue
 
@@ -456,21 +466,23 @@ Respond with EXACTLY one word: SELL or HOLD"""
 
             if discount >= reentry_discount:
                 console.print(
-                    f"[green]RE-ENTRY OPPORTUNITY: {ticker} | "
+                    f"[yellow]RE-ENTRY FLAG: {ticker} | "
                     f"Prev entry=${prev_entry}, now ${current_price} "
-                    f"({discount:.0%} cheaper). Flagging for Claude.[/green]"
+                    f"({discount:.0%} cheaper). Sending to Claude for evaluation.[/yellow]"
                 )
-                # Push an orderbook update to the queue so the signal evaluator
-                # picks it up and sends it to Claude for analysis
-                from data.cache import OrderbookUpdate
-                update = self._cache.update_orderbook(
+                # Mark that we've flagged this re-entry
+                exit_info["reentry_count"] = exit_info.get("reentry_count", 0) + 1
+
+                # Push an orderbook update so the signal evaluator sends it
+                # to Claude. Claude will decide based on CURRENT game state
+                # whether there's still edge — not just because it's cheaper.
+                self._cache.update_orderbook(
                     ticker=ticker,
                     best_bid=current_price,
                     best_ask=current_price + Decimal("0.01"),
                     bid_volume=Decimal("1000"),
                     ask_volume=Decimal("1000"),
                 )
-                # The signal evaluator will process this via the normal flow
 
         # Clean up expired exits
         for ticker in expired:

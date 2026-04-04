@@ -154,6 +154,9 @@ class EdgeRunner:
         # Core state
         self._cache: AgentCache = get_cache()
         self._queue: asyncio.Queue[QueueMsg] = asyncio.Queue(maxsize=1000)
+        # Track starting bankroll for the session — used to cap max bet size
+        # so that profits from earlier trades don't inflate position sizes
+        self._starting_bankroll: Decimal = Decimal("0")
         self._running: bool = False
         # Track last analyzed price and time per ticker to avoid redundant Claude calls
         self._last_analyzed_price: dict[str, Decimal] = {}
@@ -377,11 +380,12 @@ class EdgeRunner:
                             f"this is a hedge, allowing).[/yellow]"
                         )
 
-        # Execute the trade
+        # Execute the trade (cap bet size at starting bankroll, not inflated by profits)
         trade = await self._order_manager.execute_trade(
             decision=decision,
             cache=self._cache,
             orderbook=orderbook,
+            max_bankroll=self._starting_bankroll,
         )
 
         if trade is not None:
@@ -553,6 +557,13 @@ class EdgeRunner:
 
         # Sync positions from Kalshi
         await self._order_manager.sync_positions(self._cache)
+
+        # Record starting bankroll (caps max bet size for the session)
+        self._starting_bankroll = self._cache.get_bankroll()
+        console.print(
+            f"[blue]Starting bankroll locked at ${self._starting_bankroll} "
+            f"(max bet sized from this, not from profits).[/blue]"
+        )
 
         # Auto-discover NBA markets (replaces manual ticker config)
         await self._discover_nba_markets()

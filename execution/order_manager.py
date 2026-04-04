@@ -55,6 +55,7 @@ class OrderManager:
         decision: TradeDecision,
         cache: AgentCache,
         orderbook: OrderbookEntry | None = None,
+        max_bankroll: Decimal | None = None,
     ) -> Trade | None:
         """
         Execute a full trade lifecycle.
@@ -74,10 +75,16 @@ class OrderManager:
         start_time = time.monotonic()
 
         # Step 1: Kelly sizing
+        # Use the LOWER of current bankroll and max_bankroll (starting bankroll)
+        # This prevents profits from inflating bet sizes within a session
+        bankroll = cache.get_bankroll()
+        if max_bankroll is not None and max_bankroll < bankroll:
+            bankroll = max_bankroll
+
         spread = orderbook.spread if orderbook else None
         kelly = calculate_kelly_bet(
             decision=decision,
-            bankroll=cache.get_bankroll(),
+            bankroll=bankroll,
             current_positions=cache.get_position_count(),
             spread=spread,
         )
