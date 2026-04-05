@@ -53,7 +53,10 @@ from data.smart_money import SmartMoneyTracker
 from execution.kalshi_client import KalshiClient
 from execution.order_manager import OrderManager
 from execution.arbitrage import ArbitrageScanner
+from execution.brier_tracker import BrierTracker
+from execution.decision_log import log_decision, classify_market_type
 from execution.position_monitor import PositionMonitor
+from execution.risk_gates import RiskGates
 from signals.analyzer import MarketAnalyzer
 
 console = Console()
@@ -215,6 +218,11 @@ class EdgeRunner:
             kalshi_client=self._kalshi_client,
             alerter=self._alerter,
             cache=self._cache,
+        )
+        # 5-gate risk system (initialized in _startup after bankroll sync)
+        self._risk_gates: RiskGates | None = None
+        self._brier_tracker: BrierTracker = BrierTracker(
+            kalshi_client=self._kalshi_client,
         )
 
     async def _signal_evaluator(self) -> None:
@@ -562,104 +570,153 @@ class EdgeRunner:
         }
 
     async def _execute_decision(self, decision, update_ticker: str) -> None:
-        """Execute a trade decision after validation checks."""
+        """
+        Execute a trade decision through the 5-gate risk system.
+
+        ALL trades must pass:
+        1. Pre-checks (confidence, data quality, opposite-side, BUY_NO logic)
+        2. 5-gate risk system (drawdown, edge, liquidity, concentration, position limit)
+        3. Order execution
+        4. Decision logging (accepted AND rejected)
+        """
+        import re
+
+        ticker = decision.target_market_id
+        market_type = classify_market_type(ticker)
+
         if not decision.is_actionable:
             return
 
-        # Minimum confidence — Claude must be at least moderately confident
+        # --- PRE-CHECKS (domain-specific, before risk gates) ---
+
+        # Confidence floor
         if decision.confidence_score < 0.55:
-            if DEBUG_MODE:
-                console.print(
-                    f"[dim]Skipped {decision.target_market_id[:30]}: "
-                    f"confidence {decision.confidence_score:.2f} < 0.55[/dim]"
-                )
-            return
-
-        # Block trades where Claude admits it doesn't have the data
-        if decision.rationale:
-            no_data_phrases = [
-                "not in available",
-                "no player data",
-                "not in available player data",
-                "missing player data",
-                "without.*stats",
-                "insufficient.*data",
-                "no data available",
-                "limited player data",
-            ]
-            rationale_lower = decision.rationale.lower()
-            for phrase in no_data_phrases:
-                import re
-                if re.search(phrase, rationale_lower):
-                    console.print(
-                        f"[yellow]BLOCKED: Claude traded without data on "
-                        f"{decision.target_market_id} — '{phrase}' found in rationale.[/yellow]"
-                    )
-                    return
-
-        # Block opposite-side trades on the same ticker
-        # Kalshi auto-nets opposing positions (BUY YES when holding NO = SELL NO)
-        # This creates confusion in our position tracking and can cause losses
-        existing_positions = self._cache.get_positions()
-        if decision.target_market_id in existing_positions:
-            existing_side = existing_positions[decision.target_market_id].side
-            new_side = "yes" if decision.action == "BUY_YES" else "no"
-            if existing_side != new_side:
-                console.print(
-                    f"[yellow]BLOCKED: Already hold {existing_side.upper()} on "
-                    f"{decision.target_market_id}. Buying {new_side.upper()} would "
-                    f"auto-net (close position). Skipping.[/yellow]"
-                )
-                return
-
-        # Validate BUY_NO probability direction
-        if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
-            console.print(
-                f"[yellow]SKIPPED: BUY_NO with inconsistent probabilities on "
-                f"{decision.target_market_id}.[/yellow]"
+            await log_decision(
+                ticker=ticker, title=ticker, action=decision.action,
+                edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                confidence=decision.confidence_score, rationale=decision.rationale,
+                market_prob=decision.implied_market_probability,
+                agent_prob=decision.agent_calculated_probability,
+                gate_results="PRE-CHECK", accepted=False,
+                rejection_reason="Confidence < 0.55", market_type=market_type,
             )
             return
 
-        # Duplicate exposure check — allows scaling in if edge is bigger
-        game_id = _extract_game_id(decision.target_market_id)
-        if game_id:
-            bet_direction = _get_game_outcome_direction(decision.target_market_id, decision.action)
-            existing_positions = self._cache.get_positions()
-
-            for pos_ticker, pos in existing_positions.items():
-                pos_game_id = _extract_game_id(pos_ticker)
-                if pos_game_id == game_id:
-                    pos_direction = _get_game_outcome_direction(
-                        pos_ticker, "BUY_YES" if pos.side == "yes" else "BUY_NO"
+        # No-data check
+        if decision.rationale:
+            no_data_phrases = [
+                "not in available", "no player data", "missing player data",
+                "without.*stats", "insufficient.*data", "limited player data",
+            ]
+            rationale_lower = decision.rationale.lower()
+            for phrase in no_data_phrases:
+                if re.search(phrase, rationale_lower):
+                    await log_decision(
+                        ticker=ticker, title=ticker, action=decision.action,
+                        edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                        confidence=decision.confidence_score, rationale=decision.rationale,
+                        market_prob=decision.implied_market_probability,
+                        agent_prob=decision.agent_calculated_probability,
+                        gate_results="PRE-CHECK", accepted=False,
+                        rejection_reason=f"No data: '{phrase}'", market_type=market_type,
                     )
-                    if pos_direction == bet_direction:
-                        # Same direction on same game — check if we should scale in
-                        # Only allow if: same ticker AND edge > 5% AND total exposure under MAX_POSITION_PCT
-                        if pos_ticker == decision.target_market_id and decision.edge >= 0.05:
-                            current_exposure = float(pos.avg_price * pos.quantity)
-                            max_exposure = float(self._starting_bankroll * Decimal(str(MAX_POSITION_PCT)))
-                            if current_exposure < max_exposure:
-                                console.print(
-                                    f"[green]SCALING IN: Adding to {pos_ticker} "
-                                    f"(edge={decision.edge:.1%}, current exposure=${current_exposure:.2f}, "
-                                    f"max=${max_exposure:.2f})[/green]"
-                                )
-                                # Allow — fall through to execution
-                            else:
-                                console.print(
-                                    f"[yellow]BLOCKED: Max exposure reached on {pos_ticker} "
-                                    f"(${current_exposure:.2f} >= ${max_exposure:.2f})[/yellow]"
-                                )
-                                return
-                        else:
-                            console.print(
-                                f"[yellow]BLOCKED: Already exposed to {bet_direction} "
-                                f"on game {game_id} via {pos_ticker}.[/yellow]"
-                            )
-                            return
+                    return
 
-        # Execute
-        orderbook = self._cache.get_orderbook(decision.target_market_id)
+        # Opposite-side block
+        existing_positions = self._cache.get_positions()
+        if ticker in existing_positions:
+            existing_side = existing_positions[ticker].side
+            new_side = "yes" if decision.action == "BUY_YES" else "no"
+            if existing_side != new_side:
+                await log_decision(
+                    ticker=ticker, title=ticker, action=decision.action,
+                    edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                    confidence=decision.confidence_score, rationale=decision.rationale,
+                    market_prob=decision.implied_market_probability,
+                    agent_prob=decision.agent_calculated_probability,
+                    gate_results="PRE-CHECK", accepted=False,
+                    rejection_reason="Opposite-side auto-net block", market_type=market_type,
+                )
+                return
+
+        # BUY_NO probability direction
+        if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
+            await log_decision(
+                ticker=ticker, title=ticker, action=decision.action,
+                edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                confidence=decision.confidence_score, rationale=decision.rationale,
+                market_prob=decision.implied_market_probability,
+                agent_prob=decision.agent_calculated_probability,
+                gate_results="PRE-CHECK", accepted=False,
+                rejection_reason="BUY_NO with inconsistent probabilities", market_type=market_type,
+            )
+            return
+
+        # Brier score category check
+        if self._brier_tracker.is_category_flagged(market_type):
+            await log_decision(
+                ticker=ticker, title=ticker, action=decision.action,
+                edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                confidence=decision.confidence_score, rationale=decision.rationale,
+                market_prob=decision.implied_market_probability,
+                agent_prob=decision.agent_calculated_probability,
+                gate_results="BRIER_FLAG", accepted=False,
+                rejection_reason=f"Category {market_type} flagged for poor Brier score",
+                market_type=market_type,
+            )
+            return
+
+        # --- 5-GATE RISK SYSTEM ---
+
+        if self._risk_gates is None:
+            return
+
+        orderbook = self._cache.get_orderbook(ticker)
+        exec_price = Decimal(str(decision.implied_market_probability))
+        if decision.action == "BUY_NO":
+            exec_price = Decimal("1") - exec_price
+
+        # Estimate bet amount for concentration check
+        from execution.risk import calculate_kelly_bet
+        kelly = calculate_kelly_bet(
+            decision, min(self._cache.get_bankroll(), self._starting_bankroll),
+            self._cache.get_position_count(),
+            orderbook.spread if orderbook else None,
+        )
+
+        game_id = _extract_game_id(ticker)
+
+        gate_result = self._risk_gates.check_all(
+            edge=decision.edge,
+            exec_price=exec_price,
+            spread=orderbook.spread if orderbook else None,
+            volume_24h=0,  # TODO: get from market data
+            depth=10,  # TODO: get from orderbook
+            game_id=game_id,
+            positions=existing_positions,
+            current_bankroll=self._cache.get_bankroll(),
+            new_bet_amount=kelly.bet_amount if not kelly.rejected else Decimal("0"),
+            current_positions=self._cache.get_position_count(),
+        )
+
+        if not gate_result.passed:
+            console.print(
+                f"[yellow]GATE BLOCKED: {ticker[:30]} — {gate_result.rejection_reason[:60]}[/yellow]"
+            )
+            await log_decision(
+                ticker=ticker, title=ticker, action=decision.action,
+                edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                confidence=decision.confidence_score, rationale=decision.rationale,
+                market_prob=decision.implied_market_probability,
+                agent_prob=decision.agent_calculated_probability,
+                gate_results=gate_result.summary(),
+                accepted=False, rejection_reason=gate_result.rejection_reason,
+                market_type=market_type,
+            )
+            return
+
+        # --- EXECUTE ---
+
         trade = await self._order_manager.execute_trade(
             decision=decision,
             cache=self._cache,
@@ -674,6 +731,20 @@ class EdgeRunner:
                 if bankroll > 0
                 else 0.0
             )
+
+            # Log accepted decision
+            await log_decision(
+                ticker=ticker, title=ticker, action=decision.action,
+                edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                confidence=decision.confidence_score, rationale=decision.rationale,
+                market_prob=decision.implied_market_probability,
+                agent_prob=decision.agent_calculated_probability,
+                gate_results=gate_result.summary(),
+                accepted=True, bet_amount=float(trade.price * trade.quantity),
+                market_type=market_type,
+            )
+
+            # Discord alert
             await self._alerter.send_trade_alert(
                 ticker=trade.kalshi_ticker,
                 side=trade.side,
@@ -913,10 +984,12 @@ class EdgeRunner:
 
         # Record starting bankroll (caps max bet size for the session)
         self._starting_bankroll = self._cache.get_bankroll()
+        self._risk_gates = RiskGates(starting_bankroll=self._starting_bankroll)
         console.print(
             f"[blue]Starting bankroll locked at ${self._starting_bankroll} "
             f"(max bet sized from this, not from profits).[/blue]"
         )
+        console.print("[blue]5-gate risk system initialized.[/blue]")
 
         # Auto-discover NBA markets (replaces manual ticker config)
         await self._discover_nba_markets()
@@ -943,6 +1016,7 @@ class EdgeRunner:
         await self._smart_money.stop()
         await self._position_monitor.stop()
         await self._arb_scanner.stop()
+        await self._brier_tracker.stop()
 
         # Sync final bankroll from Kalshi for accurate reporting
         try:
@@ -1023,6 +1097,7 @@ class EdgeRunner:
                 self._signal_evaluator(),
                 self._position_monitor.run(),
                 self._arb_scanner.run(),
+                self._brier_tracker.run(),
                 self._watchdog(),
                 self._auto_shutdown_timer(),
                 return_exceptions=True,
