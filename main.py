@@ -376,17 +376,9 @@ class EdgeRunner:
                 smart_money = sig
                 break
 
-        # Call Claude with ALL available context
-        title = self._market_titles.get(update.ticker, update.ticker)
-        decision = await self._analyzer.analyze_market(
-            ticker=update.ticker,
-            title=title,
-            cache=self._cache,
-            orderbook=orderbook,
-            player_stats=all_stats_list[0] if all_stats_list else None,
-            smart_money=smart_money,
-            game_data=game_data,
-        )
+        # LEGACY: This method is no longer called. Rules engine is used instead.
+        # See _evaluate_with_rules() for the current evaluation path.
+        return
 
         if not decision.is_actionable:
             return
