@@ -566,6 +566,29 @@ class EdgeRunner:
         if not decision.is_actionable:
             return
 
+        # Minimum confidence — Claude must be at least moderately confident
+        if decision.confidence_score < 0.55:
+            if DEBUG_MODE:
+                console.print(
+                    f"[dim]Skipped {decision.target_market_id[:30]}: "
+                    f"confidence {decision.confidence_score:.2f} < 0.55[/dim]"
+                )
+            return
+
+        # Max trades per game — prevent overtrading on one event
+        game_id = _extract_game_id(decision.target_market_id)
+        if game_id:
+            trades_this_game = sum(
+                1 for t in self._cache.get_positions()
+                if _extract_game_id(t) == game_id
+            )
+            if trades_this_game >= 3:
+                console.print(
+                    f"[yellow]BLOCKED: Already {trades_this_game} positions on game "
+                    f"{game_id}. Max 3 per game.[/yellow]"
+                )
+                return
+
         # Block trades where Claude admits it doesn't have the data
         if decision.rationale:
             no_data_phrases = [
