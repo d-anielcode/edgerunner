@@ -588,6 +588,21 @@ class EdgeRunner:
                     )
                     return
 
+        # Block opposite-side trades on the same ticker
+        # Kalshi auto-nets opposing positions (BUY YES when holding NO = SELL NO)
+        # This creates confusion in our position tracking and can cause losses
+        existing_positions = self._cache.get_positions()
+        if decision.target_market_id in existing_positions:
+            existing_side = existing_positions[decision.target_market_id].side
+            new_side = "yes" if decision.action == "BUY_YES" else "no"
+            if existing_side != new_side:
+                console.print(
+                    f"[yellow]BLOCKED: Already hold {existing_side.upper()} on "
+                    f"{decision.target_market_id}. Buying {new_side.upper()} would "
+                    f"auto-net (close position). Skipping.[/yellow]"
+                )
+                return
+
         # Validate BUY_NO probability direction
         if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
             console.print(
