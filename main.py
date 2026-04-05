@@ -57,7 +57,7 @@ from execution.brier_tracker import BrierTracker
 from execution.decision_log import log_decision, classify_market_type
 from execution.position_monitor import PositionMonitor
 from execution.risk_gates import RiskGates
-from signals.analyzer import MarketAnalyzer
+from signals.rules import RulesEvaluator
 
 console = Console()
 UTC = timezone.utc
@@ -198,7 +198,7 @@ class EdgeRunner:
             queue=self._queue,
             cache=self._cache,
         )
-        self._analyzer: MarketAnalyzer = MarketAnalyzer()
+        self._rules: RulesEvaluator = RulesEvaluator()
         self._kalshi_client: KalshiClient = KalshiClient()
         self._market_poller: MarketPoller = MarketPoller(
             queue=self._queue,
@@ -211,7 +211,7 @@ class EdgeRunner:
         self._position_monitor: PositionMonitor = PositionMonitor(
             kalshi_client=self._kalshi_client,
             cache=self._cache,
-            analyzer=self._analyzer,
+            analyzer=None,  # No longer using LLM for position management
             alerter=self._alerter,
         )
         self._arb_scanner: ArbitrageScanner = ArbitrageScanner(
@@ -237,15 +237,11 @@ class EdgeRunner:
         """
         console.print("[blue]Signal evaluator: Started.[/blue]")
 
-        # Warmup: wait 2 minutes before allowing trades
-        # This ensures ESPN game states, market data, and player stats are all loaded
-        warmup_seconds = 120
-        console.print(
-            f"[blue]Signal evaluator: Warming up for {warmup_seconds}s "
-            f"(loading ESPN, markets, player data)...[/blue]"
-        )
-        await asyncio.sleep(warmup_seconds)
-        console.print("[green]Signal evaluator: Warmup complete. Now trading.[/green]")
+        # Short warmup: wait 30 seconds for market data to load
+        # No Claude startup needed — rules engine is instant
+        console.print("[blue]Signal evaluator: Loading market data (30s)...[/blue]")
+        await asyncio.sleep(30)
+        console.print("[green]Signal evaluator: Ready. Rules engine active.[/green]")
 
         while self._running:
             try:
@@ -288,16 +284,9 @@ class EdgeRunner:
                     if market_data is not None:
                         markets_to_analyze.append(market_data)
 
-                # Process in batches of 5
-                BATCH_SIZE = 5
-                for i in range(0, len(markets_to_analyze), BATCH_SIZE):
-                    batch = markets_to_analyze[i:i + BATCH_SIZE]
-                    if len(batch) == 1:
-                        # Single market — use regular path
-                        await self._evaluate_single_market(batch[0])
-                    elif batch:
-                        # Multiple markets — use batched Claude call
-                        await self._evaluate_market_batch(batch)
+                # Evaluate each market with rules engine (instant, no API cost)
+                for market_data in markets_to_analyze:
+                    await self._evaluate_with_rules(market_data)
 
             except Exception as e:
                 console.print(
@@ -756,26 +745,32 @@ class EdgeRunner:
                 latency_ms=trade.execution_latency_ms or 0,
             )
 
-    async def _evaluate_single_market(self, market_data: dict) -> None:
-        """Evaluate a single market using the standard Claude call."""
-        decision = await self._analyzer.analyze_market(
+    async def _evaluate_with_rules(self, market_data: dict) -> None:
+        """Evaluate a single market using the rules engine. No API cost."""
+        # Get ESPN game state for veto logic
+        espn_game = None
+        game_states = self._live_game_states
+        if game_states:
+            import re
+            match = re.search(r"KXNBA\w*-\d{2}[A-Z]{3}\d{2}([A-Z]{6})", market_data["ticker"].upper())
+            if match:
+                game_id = match.group(1)
+                game = game_states.get(game_id)
+                if game:
+                    espn_game = {
+                        "status": game.status,
+                        "quarter": game.quarter,
+                        "home_score": game.home_score,
+                        "away_score": game.away_score,
+                    }
+
+        decision = self._rules.evaluate_market(
             ticker=market_data["ticker"],
-            title=market_data["title"],
-            cache=self._cache,
+            title=market_data.get("title", market_data["ticker"]),
             orderbook=market_data.get("orderbook"),
-            smart_money=market_data.get("smart_money"),
-            game_data=market_data.get("game_data"),
+            espn_game=espn_game,
         )
         await self._execute_decision(decision, market_data["ticker"])
-
-    async def _evaluate_market_batch(self, batch: list[dict]) -> None:
-        """Evaluate multiple markets in one batched Claude call."""
-        decisions = await self._analyzer.analyze_markets_batch(
-            markets=batch,
-            cache=self._cache,
-        )
-        for decision in decisions:
-            await self._execute_decision(decision, decision.target_market_id)
 
     async def _watchdog(self) -> None:
         """
@@ -816,17 +811,10 @@ class EdgeRunner:
                         f"Signal evaluator may be falling behind.[/yellow]"
                     )
 
-                # Check Claude API budget
-                analyzer_status = self._analyzer.get_status()
-                if analyzer_status["is_over_budget"]:
-                    console.print(
-                        f"[red]Watchdog: Claude API budget exceeded! "
-                        f"${analyzer_status['cumulative_cost']:.2f} spent.[/red]"
-                    )
-
                 if DEBUG_MODE:
                     positions = self._cache.get_position_count()
                     bankroll = self._cache.get_bankroll()
+                    rules_stats = self._rules.get_stats()
                     console.print(
                         f"[dim]Watchdog: Queue={qsize} | Positions={positions} | "
                         f"Bankroll=${bankroll} | "
@@ -1025,7 +1013,7 @@ class EdgeRunner:
             pass
 
         # Build session summary
-        analyzer_status = self._analyzer.get_status()
+        analyzer_status = self._rules.get_stats()
         order_status = self._order_manager.get_status()
         final_bankroll = self._cache.get_bankroll()
         pnl = final_bankroll - self._starting_bankroll
@@ -1039,12 +1027,13 @@ class EdgeRunner:
         console.print(f"  Final Bankroll:    ${final_bankroll}")
         pnl_color = "green" if pnl >= 0 else "red"
         console.print(f"  [{pnl_color}]Session P&L:       ${pnl:+.2f} ({pnl_pct:+.1f}%)[/{pnl_color}]")
+        rules_stats = self._rules.get_stats()
         console.print(f"  Trades Executed:   {order_status['total_executions']}")
         console.print(f"  Trades Rejected:   {order_status['total_rejections']}")
         console.print(f"  Open Positions:    {open_positions}")
-        console.print(f"  Claude API Calls:  {analyzer_status['total_calls']}")
-        console.print(f"  Claude API Cost:   ${analyzer_status['cumulative_cost']:.4f}")
-        console.print(f"  Cache Hit Rate:    {analyzer_status['cache_rate_pct']:.0f}%")
+        console.print(f"  Markets Evaluated: {rules_stats['total_evaluated']}")
+        console.print(f"  Signals Generated: {rules_stats['total_signals']} ({rules_stats['signal_rate']})")
+        console.print(f"  Claude API Cost:   $0.00 (rules-based, no LLM)")
         console.print(f"  Session Duration:  {uptime_min:.0f} minutes")
         console.print(f"  Shutdown Reason:   {reason}")
 
@@ -1058,7 +1047,7 @@ class EdgeRunner:
                 bankroll=final_bankroll,
                 avg_clv=0.0,
                 avg_latency_ms=0,
-                api_cost=analyzer_status["cumulative_cost"],
+                api_cost=0.0,  # No LLM cost — rules-based
             )
             await self._alerter.send_shutdown(
                 f"{reason} | P&L: ${pnl:+.2f} ({pnl_pct:+.1f}%) | "
