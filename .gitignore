@@ -6,6 +6,10 @@
 # Runtime data
 data/peak_prices.json
 
+# Large datasets (36GB+)
+data/dataset/
+data/trevorjs/
+
 # RSA private keys
 keys/
 *.pem

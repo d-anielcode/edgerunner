@@ -1,17 +1,17 @@
 """
-Kalshi NBA market ticker definitions and helpers.
+Kalshi sports market ticker definitions and helpers.
 
 This is the single place that knows how Kalshi market tickers are structured.
 All other modules use these helpers to categorize and filter markets.
 
-Kalshi NBA tickers follow patterns like:
-  KXNBA-LEBRON-PTS-O25   (LeBron James over 25.5 points)
-  KXNBA-LAKERS-WIN       (Lakers to win)
-  KXNBA-LAKERS-SPREAD    (Lakers spread)
-
-NOTE: These patterns are based on Kalshi documentation examples and may need
-updating once we connect to the live API. The categorize_ticker() function
-is defensive — it returns None for unrecognized patterns instead of crashing.
+Supported sports for "fade favorites" strategy:
+  NBA:     KXNBAGAME-26APR03NOPSAC-NOP   (Oct-Jun)
+  NHL:     KXNHLGAME-26APR03TORSEA-TOR   (Oct-Apr reg season)
+  EPL:     KXEPLGAME-26JAN25ARSMUN-ARS   (Aug-May)
+  UCL:     KXUCLGAME-26JAN28BENRMA-BEN   (Sep-Jun)
+  La Liga: KXLALIGAGAME-26JAN18RSOBAR-RSO (Aug-May)
+  WNBA:    KXWNBAGAME-25JUL15ATLCHI-ATL   (May-Oct)
+  UFC:     KXUFCFIGHT-25NOV15PANTOP-PAN    (year-round)
 """
 
 import re
@@ -25,7 +25,7 @@ console = Console()
 
 class MarketCategory(str, Enum):
     """
-    Categories of NBA prediction markets on Kalshi.
+    Categories of sports prediction markets on Kalshi.
 
     Why str + Enum? So the value can be stored directly in Supabase
     as a string without needing conversion.
@@ -38,13 +38,47 @@ class MarketCategory(str, Enum):
     GAME_TOTAL = "game_total"
     GAME_SPREAD = "game_spread"
     GAME_WINNER = "game_winner"
+    NHL_GAME_WINNER = "nhl_game_winner"
+    EPL_GAME_WINNER = "epl_game_winner"
+    UCL_GAME_WINNER = "ucl_game_winner"
+    LALIGA_GAME_WINNER = "laliga_game_winner"
+    WNBA_GAME_WINNER = "wnba_game_winner"
+    UFC_FIGHT_WINNER = "ufc_fight_winner"
+    NCAAMB_GAME_WINNER = "ncaamb_game_winner"
+    NCAAWB_GAME_WINNER = "ncaawb_game_winner"
+    WTA_MATCH_WINNER = "wta_match_winner"
+    WEATHER_HIGH = "weather_high"
+    CPI_INFLATION = "cpi_inflation"
+    NFL_ANYTIME_TD = "nfl_anytime_td"
 
 
-# Common prefix for all Kalshi NBA markets
+# Prefixes for supported sports
 KALSHI_NBA_PREFIX: str = "KXNBA"
+KALSHI_NHL_PREFIX: str = "KXNHL"
+
+# All sport prefixes we trade
+SUPPORTED_SPORT_PREFIXES: list[str] = [
+    KALSHI_NBA_PREFIX, KALSHI_NHL_PREFIX,
+    "KXEPL", "KXUCL", "KXLALIGA", "KXWNBA", "KXUFC",
+    "KXNCAAMB", "KXNCAAWB", "KXWTA",
+    "KXHIGH", "CPI", "CPICORE", "CPICOREYOY",
+    "KXNFLANYTD",
+]
+
+# Game winner ticker patterns we actively trade (fade favorites)
+GAME_WINNER_PATTERNS: list[str] = [
+    "KXNBAGAME", "KXNHLGAME",
+    "KXEPLGAME", "KXUCLGAME", "KXLALIGAGAME",
+    "KXWNBAGAME", "KXUFCFIGHT",
+    "KXNCAAMBGAME", "KXNCAAWBGAME",
+    "KXWTAMATCH",
+    "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA", "KXHIGHLA", "KXHIGHSF",
+    "KXHIGHHOU", "KXHIGHDEN", "KXHIGHDC", "KXHIGHDAL",
+    "CPI", "CPICORE", "CPICOREYOY",
+    "KXNFLANYTD",
+]
 
 # Regex patterns for matching tickers to categories.
-# Each pattern matches the relevant segment of a Kalshi NBA ticker.
 MARKET_TICKER_PATTERNS: dict[MarketCategory, re.Pattern[str]] = {
     MarketCategory.PLAYER_POINTS: re.compile(r"KXNBA.*PTS", re.IGNORECASE),
     MarketCategory.PLAYER_REBOUNDS: re.compile(r"KXNBA.*REB", re.IGNORECASE),
@@ -53,6 +87,18 @@ MARKET_TICKER_PATTERNS: dict[MarketCategory, re.Pattern[str]] = {
     MarketCategory.GAME_TOTAL: re.compile(r"KXNBA.*TOTAL", re.IGNORECASE),
     MarketCategory.GAME_SPREAD: re.compile(r"KXNBA.*SPREAD", re.IGNORECASE),
     MarketCategory.GAME_WINNER: re.compile(r"KXNBA.*WIN", re.IGNORECASE),
+    MarketCategory.NHL_GAME_WINNER: re.compile(r"KXNHLGAME", re.IGNORECASE),
+    MarketCategory.EPL_GAME_WINNER: re.compile(r"KXEPLGAME", re.IGNORECASE),
+    MarketCategory.UCL_GAME_WINNER: re.compile(r"KXUCLGAME", re.IGNORECASE),
+    MarketCategory.LALIGA_GAME_WINNER: re.compile(r"KXLALIGAGAME", re.IGNORECASE),
+    MarketCategory.WNBA_GAME_WINNER: re.compile(r"KXWNBAGAME", re.IGNORECASE),
+    MarketCategory.UFC_FIGHT_WINNER: re.compile(r"KXUFCFIGHT", re.IGNORECASE),
+    MarketCategory.NCAAMB_GAME_WINNER: re.compile(r"KXNCAAMBGAME", re.IGNORECASE),
+    MarketCategory.NCAAWB_GAME_WINNER: re.compile(r"KXNCAAWBGAME", re.IGNORECASE),
+    MarketCategory.WTA_MATCH_WINNER: re.compile(r"KXWTAMATCH", re.IGNORECASE),
+    MarketCategory.WEATHER_HIGH: re.compile(r"KXHIGH", re.IGNORECASE),
+    MarketCategory.CPI_INFLATION: re.compile(r"^CPI", re.IGNORECASE),
+    MarketCategory.NFL_ANYTIME_TD: re.compile(r"KXNFLANYTD", re.IGNORECASE),
 }
 
 # Which categories the agent actively trades in V1.
@@ -89,12 +135,66 @@ def is_nba_market(ticker: str) -> bool:
     return ticker.upper().startswith(KALSHI_NBA_PREFIX)
 
 
+def is_nhl_market(ticker: str) -> bool:
+    """Check if a ticker belongs to the Kalshi NHL market family."""
+    return ticker.upper().startswith(KALSHI_NHL_PREFIX)
+
+
+def is_sports_market(ticker: str) -> bool:
+    """Check if a ticker belongs to any supported sport."""
+    upper = ticker.upper()
+    return any(upper.startswith(p) for p in SUPPORTED_SPORT_PREFIXES)
+
+
+def is_game_winner(ticker: str) -> bool:
+    """Check if a ticker is a game/fight winner market we trade."""
+    upper = ticker.upper()
+    return any(p in upper for p in GAME_WINNER_PATTERNS)
+
+
+def get_sport(ticker: str) -> str | None:
+    """Return the sport identifier for a ticker."""
+    upper = ticker.upper()
+    if "KXNBAGAME" in upper:
+        return "NBA"
+    if "KXNHLGAME" in upper:
+        return "NHL"
+    if "KXEPLGAME" in upper:
+        return "EPL"
+    if "KXUCLGAME" in upper:
+        return "UCL"
+    if "KXLALIGAGAME" in upper:
+        return "LALIGA"
+    if "KXWNBAGAME" in upper:
+        return "WNBA"
+    if "KXUFCFIGHT" in upper:
+        return "UFC"
+    if "KXNCAAMBGAME" in upper:
+        return "NCAAMB"
+    if "KXNCAAWBGAME" in upper:
+        return "NCAAWB"
+    if "KXWTAMATCH" in upper:
+        return "WTA"
+    if "KXHIGH" in upper:
+        return "WEATHER"
+    if upper.startswith("CPI"):
+        return "CPI"
+    if "KXNFLANYTD" in upper:
+        return "NFLTD"
+    # Fallback to prefix matching
+    if upper.startswith(KALSHI_NBA_PREFIX):
+        return "NBA"
+    if upper.startswith(KALSHI_NHL_PREFIX):
+        return "NHL"
+    return None
+
+
 def is_supported_market(ticker: str) -> bool:
     """
     Check if a ticker is in a category the agent actively trades.
 
     Returns True only if:
-    1. The ticker is an NBA market
+    1. The ticker is a supported sport market
     2. The ticker matches a category in SUPPORTED_CATEGORIES
     """
     category = categorize_ticker(ticker)
@@ -122,13 +222,14 @@ if __name__ == "__main__":
     console.print("\n[bold]Ticker Categorization Tests:[/bold]")
     test_tickers = [
         "KXNBA-LEBRON-PTS-O25",
-        "KXNBA-JOKIC-REB-O12",
-        "KXNBA-CURRY-AST-O7",
-        "KXNBA-CURRY-3PT-O5",
-        "KXNBA-LAKERS-CELTICS-TOTAL-O220",
-        "KXNBA-LAKERS-SPREAD",
         "KXNBA-LAKERS-WIN",
-        "KXWEATHER-NYC-TEMP",  # Not NBA
+        "KXNHLGAME-26APR06TORSEA-TOR",
+        "KXEPLGAME-26JAN25ARSMUN-ARS",
+        "KXUCLGAME-26JAN28BENRMA-BEN",
+        "KXLALIGAGAME-26JAN18RSOBAR-RSO",
+        "KXWNBAGAME-25JUL15ATLCHI-ATL",
+        "KXUFCFIGHT-25NOV15PANTOP-PAN",
+        "KXWEATHER-NYC-TEMP",  # Not sports
         "RANDOM-TICKER",  # Unknown
     ]
 

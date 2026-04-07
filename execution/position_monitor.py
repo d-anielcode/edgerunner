@@ -51,7 +51,7 @@ BREAKEVEN_LOCK_PCT: float = 0.50  # Up 50% → never let it become a loss
 BANKROLL_LOSS_THRESHOLD: float = 0.02  # 2% of bankroll loss triggers review
 
 # Auto profit-take (no Claude needed)
-AUTO_PROFIT_TAKE_PCT: float = 2.00  # 200% gain → auto-sell, lock it in
+AUTO_PROFIT_TAKE_PCT: float = 4.00  # 400% gain → auto-sell, lock it in (let winners run)
 
 # Quarter-aware trailing stops for player props
 # [Q1, Q2, Q3, Q4] — how much decline to allow from peak before selling
@@ -261,7 +261,30 @@ class PositionMonitor:
             current_quarter = get_quarter_from_game(game_states, position.kalshi_ticker)
             return await self._evaluate_player_prop(position, current_quarter)
 
-        # Game winners/spreads: full trailing stop-loss system
+        # Game winners: HOLD TO SETTLEMENT — no trailing stops
+        # The backtest models hold-to-settlement and that's where the edge is.
+        # Selling early at 33c instead of waiting for $1.00 destroys the payout ratio.
+        from config.markets import is_game_winner, get_sport
+        pos_sport = get_sport(position.kalshi_ticker)
+        hold_to_settle = is_game_winner(position.kalshi_ticker) or pos_sport in ("WEATHER", "CPI", "NFLTD")
+        if hold_to_settle:
+            current_price = await self._get_current_price(
+                position.kalshi_ticker, position.side
+            )
+            pnl_pct = 0.0
+            unrealized = Decimal("0")
+            if current_price is not None:
+                unrealized = (current_price - position.avg_price) * position.quantity
+                pnl_pct = float((current_price - position.avg_price) / position.avg_price) if position.avg_price > 0 else 0.0
+            return {
+                "action": "hold",
+                "current_price": current_price,
+                "unrealized_pnl": unrealized,
+                "pnl_pct": pnl_pct,
+                "reason": f"Game winner: hold to settlement (P&L: {pnl_pct:+.0%})",
+            }
+
+        # Spreads/other: full trailing stop-loss system
         current_price = await self._get_current_price(
             position.kalshi_ticker, position.side
         )
@@ -435,13 +458,19 @@ Rules:
 Respond with EXACTLY one word: SELL or HOLD"""
 
         try:
-            response = await client.messages.create(
-                model="claude-haiku-4-5",  # TODO: import MODEL_ID from analyzer
-                max_tokens=10,
-                messages=[{"role": "user", "content": prompt}],
+            response = await asyncio.wait_for(
+                client.messages.create(
+                    model="claude-haiku-4-5",
+                    max_tokens=10,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                timeout=5.0,
             )
             answer = response.content[0].text.strip().upper()
             return "sell" if "SELL" in answer else "hold"
+        except asyncio.TimeoutError:
+            console.print("[yellow]Claude timeout on stop-loss check -- defaulting to SELL[/yellow]")
+            return "sell"
         except Exception:
             return "sell"  # Default to cutting losses if Claude is unavailable
 

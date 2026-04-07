@@ -118,6 +118,9 @@ MIN_EDGE_THRESHOLD: float = float(os.getenv("MIN_EDGE_THRESHOLD", "0.05"))
 MAX_SPREAD_CENTS: float = float(os.getenv("MAX_SPREAD_CENTS", "0.03"))
 """Maximum bid-ask spread in dollars to accept a trade (default: $0.03)."""
 
+MAX_BET_DOLLARS: float = float(os.getenv("MAX_BET_DOLLARS", "100.0"))
+"""Maximum dollar amount per trade (default: $100). Limits compounding risk."""
+
 # =============================================================================
 # DATA FEEDS
 # =============================================================================
@@ -159,6 +162,9 @@ CLAUDE_MONTHLY_BUDGET_LIMIT: float = float(
 
 DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
+DRY_RUN: bool = os.getenv("DRY_RUN", "false").lower() == "true"
+"""Dry-run mode: evaluate signals, log decisions, but skip placing orders on Kalshi."""
+
 # =============================================================================
 # STARTUP BANNER — So you always know which mode you're in
 # =============================================================================
@@ -174,6 +180,7 @@ console.print(
         f"Kalshi Key: {_mask_key(KALSHI_API_KEY_ID)}\n"
         f"Supabase: {SUPABASE_URL}\n"
         f"Kelly: {FRACTIONAL_KELLY}x | Max Position: {MAX_POSITION_PCT * 100}%\n"
+        f"Dry Run: {DRY_RUN}\n"
         f"Debug: {DEBUG_MODE}",
         title="EdgeRunner",
         border_style=_mode_color,
@@ -207,5 +214,6 @@ __all__ = [
     "SMART_MONEY_MIN_TRADERS",
     "POLYMARKET_DATA_API",
     "DEBUG_MODE",
+    "DRY_RUN",
     "console",
 ]

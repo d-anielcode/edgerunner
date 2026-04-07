@@ -299,7 +299,11 @@ class KalshiFeed:
                 self._last_message_time = time.monotonic()
                 self._msg_count += 1
 
-                data = json.loads(raw)
+                try:
+                    data = json.loads(raw)
+                except (json.JSONDecodeError, ValueError) as e:
+                    console.print(f"[yellow]WS malformed JSON: {e} | {raw[:100]}[/yellow]")
+                    continue
                 await self._handle_message(data)
 
                 # Log first few raw messages at DEBUG for format verification

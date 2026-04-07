@@ -87,20 +87,19 @@ Player names are extracted from player prop market titles.
 
 def _extract_game_id(ticker: str) -> str | None:
     """
-    Extract the game identifier from a Kalshi NBA ticker.
+    Extract the game identifier from a Kalshi sports ticker.
 
-    Examples:
+    Supports all sports:
       KXNBAGAME-26APR03NOPSAC-NOP → NOPSAC
-      KXNBAGAME-26APR03NOPSAC-SAC → NOPSAC
-      KXNBASPREAD-26APR03ORLDAL-ORL7 → ORLDAL
-      KXNBAPTS-26APR03MINPHI-PHIVEDGECOMBE77-25 → MINPHI
+      KXNHLGAME-26APR06TORSEA-TOR → TORSEA
+      KXEPLGAME-26JAN25ARSMUN-ARS → ARSMUN
+      KXUFCFIGHT-25NOV15PANTOP-PAN → PANTOP
 
-    The game ID is the 6-letter team combo (e.g., NOPSAC, ORLDAL, MINPHI)
-    that appears after the date segment.
+    The game ID is the 3-6 letter combo that appears after the date segment.
     """
     import re
-    # Match: KXNBA<type>-<date><GAMEID>-<rest>
-    match = re.search(r"KXNBA\w*-\d{2}[A-Z]{3}\d{2}([A-Z]{6})", ticker.upper())
+    # Match: KX<type>-<2-digit year><3-letter month><2-digit day><GAMEID>-<rest>
+    match = re.search(r"KX\w+-\d{2}[A-Z]{3}\d{2}([A-Z]{3,8})-", ticker.upper())
     if match:
         return match.group(1)
     return None
@@ -176,8 +175,9 @@ class EdgeRunner:
         # Track last analyzed price and time per ticker to avoid redundant Claude calls
         self._last_analyzed_price: dict[str, Decimal] = {}
         self._last_analyzed_time: dict[str, float] = {}
-        # Cache market titles (fetched at startup)
+        # Cache market titles and volumes (fetched at startup)
         self._market_titles: dict[str, str] = {}
+        self._market_volumes: dict[str, float] = {}
         # Minimum price change (in dollars) before re-analyzing a market
         self._min_price_change: Decimal = Decimal("0.01")
         # Re-analyze even without price change after this many seconds
@@ -427,7 +427,7 @@ class EdgeRunner:
             decision=decision,
             cache=self._cache,
             orderbook=orderbook,
-            max_bankroll=self._starting_bankroll,
+            max_bankroll=None,  # MAX_BET_DOLLARS cap handles risk instead
         )
 
         if trade is not None:
@@ -457,7 +457,12 @@ class EdgeRunner:
         This is the gate that prevents wasteful API calls.
         """
         orderbook = self._cache.get_orderbook(update.ticker)
+        from config.markets import is_game_winner as _is_gw2
+        _is_gw_ticker = _is_gw2(update.ticker)
+
         if orderbook is None or orderbook.best_bid is None:
+            if _is_gw_ticker:
+                console.print(f"[dim]PREP SKIP {update.ticker[:40]}: no cache/bid (ob={orderbook is not None}, bid={orderbook.best_bid if orderbook else 'N/A'})[/dim]")
             return None
 
         # Skip markets where the game is almost over (< 2 min left in Q4)
@@ -496,10 +501,13 @@ class EdgeRunner:
 
         # Skip if spread is too wide
         if orderbook.spread is not None and orderbook.spread > Decimal("0.05"):
+            if _is_gw_ticker:
+                console.print(f"[dim]PREP SKIP {update.ticker[:40]}: spread {orderbook.spread} > 0.05[/dim]")
             return None
 
         # Skip if price hasn't changed AND analysis is recent
-        current_price = update.best_bid or Decimal("0")
+        # Use cache price (always up-to-date) not update price (may be None from WS)
+        current_price = orderbook.best_bid or Decimal("0")
         last_price = self._last_analyzed_price.get(update.ticker, Decimal("-1"))
         last_time = self._last_analyzed_time.get(update.ticker, 0.0)
         time_since = time.monotonic() - last_time
@@ -513,6 +521,8 @@ class EdgeRunner:
         analysis_stale = time_since >= self._max_stale_analysis
 
         if not price_changed and not analysis_stale:
+            if _is_gw_ticker:
+                console.print(f"[dim]PREP SKIP {update.ticker[:40]}: no price change (cur={current_price} last={last_price} stale={time_since:.0f}s)[/dim]")
             return None
 
         self._last_analyzed_price[update.ticker] = current_price
@@ -603,11 +613,14 @@ class EdgeRunner:
                     )
                     return
 
-        # Opposite-side block
+        # Duplicate and opposite-side block
         existing_positions = self._cache.get_positions()
         if ticker in existing_positions:
             existing_side = existing_positions[ticker].side
             new_side = "yes" if decision.action == "BUY_YES" else "no"
+            if existing_side == new_side:
+                # Already holding this exact position — don't double up
+                return
             if existing_side != new_side:
                 await log_decision(
                     ticker=ticker, title=ticker, action=decision.action,
@@ -660,7 +673,7 @@ class EdgeRunner:
         # Estimate bet amount for concentration check
         from execution.risk import calculate_kelly_bet
         kelly = calculate_kelly_bet(
-            decision, min(self._cache.get_bankroll(), self._starting_bankroll),
+            decision, self._cache.get_bankroll(),
             self._cache.get_position_count(),
             orderbook.spread if orderbook else None,
         )
@@ -671,8 +684,8 @@ class EdgeRunner:
             edge=decision.edge,
             exec_price=exec_price,
             spread=orderbook.spread if orderbook else None,
-            volume_24h=0,  # TODO: get from market data
-            depth=10,  # TODO: get from orderbook
+            volume_24h=int(self._market_volumes.get(ticker, 0)),
+            depth=int(orderbook.bid_volume + orderbook.ask_volume) if orderbook else 0,
             game_id=game_id,
             positions=existing_positions,
             current_bankroll=self._cache.get_bankroll(),
@@ -702,7 +715,7 @@ class EdgeRunner:
             decision=decision,
             cache=self._cache,
             orderbook=orderbook,
-            max_bankroll=self._starting_bankroll,
+            max_bankroll=None,  # MAX_BET_DOLLARS cap handles risk instead
         )
 
         if trade is not None:
@@ -744,7 +757,7 @@ class EdgeRunner:
         game_states = self._live_game_states
         if game_states:
             import re
-            match = re.search(r"KXNBA\w*-\d{2}[A-Z]{3}\d{2}([A-Z]{6})", market_data["ticker"].upper())
+            match = re.search(r"KX\w+-\d{2}[A-Z]{3}\d{2}([A-Z]{3,8})-", market_data["ticker"].upper())
             if match:
                 game_id = match.group(1)
                 game = game_states.get(game_id)
@@ -762,6 +775,17 @@ class EdgeRunner:
             orderbook=market_data.get("orderbook"),
             espn_game=espn_game,
         )
+
+        # Debug: log game winner evaluations
+        from config.markets import is_game_winner as _is_gw
+        if _is_gw(market_data["ticker"]):
+            ob = market_data.get("orderbook")
+            bid = ob.best_bid if ob else "None"
+            console.print(
+                f"[dim]GW EVAL: {market_data['ticker'][:40]} | bid={bid} | "
+                f"{decision.action} | {decision.rationale[:60]}[/dim]"
+            )
+
         await self._execute_decision(decision, market_data["ticker"])
 
     async def _watchdog(self) -> None:
@@ -810,8 +834,8 @@ class EdgeRunner:
                     console.print(
                         f"[dim]Watchdog: Queue={qsize} | Positions={positions} | "
                         f"Bankroll=${bankroll} | "
-                        f"Claude=${analyzer_status['cumulative_cost']:.2f} | "
-                        f"Cache={analyzer_status['cache_rate_pct']:.0f}%[/dim]"
+                        f"Rules: {rules_stats['total_signals']}/{rules_stats['total_evaluated']} signals "
+                        f"({rules_stats['signal_rate']})[/dim]"
                     )
 
             except Exception as e:
@@ -821,20 +845,36 @@ class EdgeRunner:
 
     async def _discover_nba_markets(self) -> None:
         """
-        Auto-discover all active NBA markets on Kalshi with liquidity.
+        Auto-discover all active NBA and NHL markets on Kalshi.
 
         Scans for game winners, spreads, and player props. Only tracks
         markets that have real orderbook depth (at least one bid and ask).
         This replaces manual ticker configuration entirely.
         """
-        console.print("[blue]Discovering NBA markets...[/blue]")
+        console.print("[blue]Discovering sports markets (NBA/NHL/EPL/UCL/LaLiga/WNBA/UFC)...[/blue]")
 
         discovered_tickers: list[str] = []
         discovered_titles: dict[str, str] = {}
         latest_game_end: datetime | None = None
 
-        # Search for NBA markets across all event types
-        for prefix in ["KXNBAGAME", "KXNBASPREAD", "KXNBAPTS"]:
+        # Search for all supported game winner markets + NBA props/spreads
+        for prefix in [
+            "KXNBAGAME", "KXNBASPREAD", "KXNBAPTS",  # NBA
+            "KXNHLGAME",                               # NHL
+            "KXEPLGAME",                               # EPL Soccer
+            "KXUCLGAME",                               # Champions League
+            "KXLALIGAGAME",                            # La Liga
+            "KXWNBAGAME",                              # WNBA
+            "KXUFCFIGHT",                              # UFC/MMA
+            "KXNCAAMBGAME",                            # NCAA Men's Basketball
+            "KXNCAAWBGAME",                            # NCAA Women's Basketball
+            "KXWTAMATCH",                              # WTA Tennis
+            "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA",     # Weather (NYC, Chicago, Miami)
+            "KXHIGHLA", "KXHIGHSF", "KXHIGHHOU",      # Weather (LA, SF, Houston)
+            "KXHIGHDEN", "KXHIGHDC", "KXHIGHDAL",     # Weather (Denver, DC, Dallas)
+            "CPI", "CPICORE", "CPICOREYOY",            # CPI / Inflation
+            "KXNFLANYTD",                              # NFL Anytime Touchdown
+        ]:
             cursor = None
             for _ in range(5):
                 try:
@@ -867,8 +907,10 @@ class EdgeRunner:
 
                             # Within today's games, be selective by volume
                             should_track = False
-                            if prefix == "KXNBAGAME":
-                                should_track = True
+                            from config.markets import GAME_WINNER_PATTERNS
+                            game_winner_prefixes = tuple(GAME_WINNER_PATTERNS)
+                            if prefix in game_winner_prefixes:
+                                should_track = True  # Always track game/fight winners
                             elif prefix == "KXNBASPREAD" and volume > 500:
                                 should_track = True
                             elif prefix == "KXNBAPTS" and volume > 100:
@@ -877,6 +919,7 @@ class EdgeRunner:
                             if should_track:
                                 discovered_tickers.append(ticker)
                                 discovered_titles[ticker] = title
+                                self._market_volumes[ticker] = volume
 
                             # Track the latest game end time for auto-shutdown
                             exp_time = m.get("expected_expiration_time", m.get("close_time"))
@@ -922,17 +965,25 @@ class EdgeRunner:
         DEFAULT_TRACKED_PLAYERS.extend({"name": name} for name in player_names)
         self._nba_poller._tracked_players = DEFAULT_TRACKED_PLAYERS
 
+        # Count by sport
+        from config.markets import get_sport
+        sport_counts: dict[str, int] = {}
+        for t in discovered_tickers:
+            s = get_sport(t) or "Other"
+            sport_counts[s] = sport_counts.get(s, 0) + 1
+        sport_summary = " + ".join(f"{c} {s}" for s, c in sorted(sport_counts.items()) if c > 0)
+
         # Display latest game end time
         if latest_game_end:
             local_end = latest_game_end.astimezone()
             console.print(
-                f"[green]Discovered: {len(discovered_tickers)} NBA markets, "
+                f"[green]Discovered: {sport_summary}, "
                 f"{len(player_names)} players | "
                 f"Last game ends ~{local_end.strftime('%I:%M %p')}[/green]"
             )
         else:
             console.print(
-                f"[green]Discovered: {len(discovered_tickers)} NBA markets, "
+                f"[green]Discovered: {sport_summary}, "
                 f"{len(player_names)} players[/green]"
             )
 
@@ -1090,64 +1141,22 @@ class EdgeRunner:
 
     async def _auto_shutdown_timer(self) -> None:
         """
-        Auto-shutdown when all games have ended.
-
-        Uses the latest game expiration time from Kalshi's market data
-        (discovered at startup). Adds a 30-minute buffer after the last
-        game's expected end time, then checks for open positions.
-
-        Also has a hard cutoff (AUTO_SHUTDOWN_HOUR, default 11 PM) as safety net.
+        Disabled — agent runs continuously. runner.py handles scheduling.
+        Re-discovers markets every 2 hours to pick up new games.
         """
-        hard_cutoff_hour = int(os.getenv("AUTO_SHUTDOWN_HOUR", "0"))  # Midnight (12 AM)
-        no_activity_since: float | None = None
-        grace_period = 300.0  # 5 minutes after last game ends
+        console.print("[blue]Auto-shutdown: DISABLED (24/7 mode). Market re-discovery every 2h.[/blue]")
 
-        # Calculate shutdown target from discovered game times
-        game_end = getattr(self, "_latest_game_end", None)
-        if game_end:
-            # Add 45 min buffer (OT can add 25+ min, plus market settlement)
-            from datetime import timedelta
-            shutdown_target = game_end + timedelta(minutes=45)
-            # Use system local time (respects OS timezone/DST settings automatically)
-            local_end = game_end.astimezone()
-            local_target = shutdown_target.astimezone()
-            cutoff_str = "midnight" if hard_cutoff_hour == 0 else f"{hard_cutoff_hour}:00"
-            console.print(
-                f"[blue]Auto-shutdown: Last game ends ~{local_end.strftime('%I:%M %p %Z')}. "
-                f"Agent will shut down ~{local_target.strftime('%I:%M %p %Z')} "
-                f"(45 min buffer for OT). Hard cutoff: {cutoff_str}.[/blue]"
-            )
-        else:
-            shutdown_target = None
-            cutoff_str = "midnight" if hard_cutoff_hour == 0 else f"{hard_cutoff_hour}:00"
-            console.print(
-                f"[blue]Auto-shutdown: No game times found. "
-                f"Hard cutoff: {cutoff_str}.[/blue]"
-            )
-
-        # Wait at least 10 minutes before checking (let markets populate)
+        # Wait for initial startup to complete
         await asyncio.sleep(600)
 
         while self._running:
-            await asyncio.sleep(120)  # Check every 2 minutes
-
-            now = datetime.now(timezone.utc)
-
-            # Hard cutoff safety net (midnight = hour 0, so check if past midnight
-            # but only after we've been running for at least 1 hour)
-            local_now = datetime.now()
-            agent_uptime = time.monotonic() - self._start_time
-            if hard_cutoff_hour == 0:
-                # Midnight cutoff: trigger if it's after midnight AND agent has run 1+ hour
-                if local_now.hour == 0 and agent_uptime > 3600:
-                    console.print("[yellow]Auto-shutdown: Midnight cutoff reached.[/yellow]")
-                    self._shutdown_reason = "Midnight cutoff"
-                    break
-            elif local_now.hour >= hard_cutoff_hour:
-                console.print(
-                    f"[yellow]Auto-shutdown: Hard cutoff {hard_cutoff_hour}:00 reached.[/yellow]"
-                )
-                self._shutdown_reason = f"Hard cutoff ({hard_cutoff_hour}:00)"
+            # Re-discover markets every 2 hours to pick up new games
+            await asyncio.sleep(7200)
+            try:
+                console.print("[blue]Re-discovering markets...[/blue]")
+                await self._discover_nba_markets()
+            except Exception as e:
+                console.print(f"[red]Market re-discovery error: {e}[/red]")
                 break
 
             # Check if we've passed the last game's end time + buffer
@@ -1159,49 +1168,6 @@ class EdgeRunner:
                         f"{self._cache.get_position_count()} positions still open. Waiting...[/yellow]"
                     )
                     continue
-                else:
-                    console.print(
-                        "[yellow]Auto-shutdown: All games ended and no open positions. "
-                        "Shutting down...[/yellow]"
-                    )
-                    self._shutdown_reason = "All games ended"
-                    break
-
-            # Check if any tracked markets still have activity
-            has_active_markets = False
-            for ticker in DEFAULT_TRACKED_TICKERS:
-                ob = self._cache.get_orderbook(ticker)
-                if ob and ob.best_bid is not None and not self._cache.is_orderbook_stale(ticker):
-                    # Market still has live data flowing
-                    has_active_markets = True
-                    break
-
-            has_open_positions = self._cache.get_position_count() > 0
-
-            if has_active_markets or has_open_positions:
-                no_activity_since = None  # Reset timer
-                continue
-
-            # No active markets AND no open positions
-            if no_activity_since is None:
-                no_activity_since = time.monotonic()
-                console.print(
-                    "[yellow]Auto-shutdown: No active markets or positions. "
-                    f"Grace period: {grace_period/60:.0f} minutes...[/yellow]"
-                )
-            elif time.monotonic() - no_activity_since >= grace_period:
-                console.print(
-                    "[yellow]Auto-shutdown: All games appear to have ended. "
-                    "Shutting down...[/yellow]"
-                )
-                break
-
-        # Trigger shutdown
-        self._running = False
-        for task in asyncio.all_tasks():
-            if task is not asyncio.current_task():
-                task.cancel()
-        return
 
 
 def main() -> None:

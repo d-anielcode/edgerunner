@@ -25,6 +25,7 @@ from rich.table import Table
 
 from config.settings import (
     FRACTIONAL_KELLY,
+    MAX_BET_DOLLARS,
     MAX_CONCURRENT_POSITIONS,
     MAX_POSITION_PCT,
     MAX_SPREAD_CENTS,
@@ -224,6 +225,11 @@ def calculate_kelly_bet(
 
     # --- Calculate dollar amount ---
     bet_amount = bankroll * Decimal(str(kelly_adjusted))
+
+    # Apply hard dollar cap per trade
+    max_bet = Decimal(str(MAX_BET_DOLLARS))
+    if bet_amount > max_bet:
+        bet_amount = max_bet
 
     # Round down to nearest cent
     bet_amount = bet_amount.quantize(Decimal("0.01"))

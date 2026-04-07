@@ -204,10 +204,15 @@ class AgentCache:
             self._orderbooks[ticker] = OrderbookEntry(ticker)
 
         entry = self._orderbooks[ticker]
-        entry.best_bid = best_bid
-        entry.best_ask = best_ask
-        entry.bid_volume = bid_volume
-        entry.ask_volume = ask_volume
+        # Don't let None/zero overwrite valid data (WS can send empty snapshots)
+        if best_bid is not None:
+            entry.best_bid = best_bid
+        if best_ask is not None:
+            entry.best_ask = best_ask
+        if bid_volume > 0:
+            entry.bid_volume = bid_volume
+        if ask_volume > 0:
+            entry.ask_volume = ask_volume
         entry.ofi = ofi
         entry.last_updated = time.monotonic()
 

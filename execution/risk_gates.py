@@ -30,13 +30,13 @@ from config.settings import (
 console = Console()
 
 # Gate 1: Drawdown
-MAX_DRAWDOWN_PCT: float = 0.20
-MAX_CONSECUTIVE_LOSSES: int = 3
-LOSS_COOLDOWN_SECONDS: float = 300.0  # 5 min pause after 3 consecutive losses
+MAX_DRAWDOWN_PCT: float = 0.40  # Pause at 40% session drawdown (backtested max is 30-57%)
+MAX_CONSECUTIVE_LOSSES: int = 6  # At 34% NBA win rate, 3-4 loss streaks are normal
+LOSS_COOLDOWN_SECONDS: float = 600.0  # 10 min pause after 6 consecutive losses
 
 # Gate 3: Liquidity
 MIN_VOLUME_24H: int = 500
-MIN_DEPTH_CONTRACTS: int = 5
+MIN_DEPTH_CONTRACTS: int = 0  # Disabled — volume_24h check is sufficient for game winners
 
 # Gate 4: Concentration
 MAX_PER_GAME: int = 3
@@ -154,7 +154,7 @@ class RiskGates:
         """
         # Kalshi fee per contract: $0.07 * P * (1-P)
         fee = float(Decimal("0.07") * exec_price * (Decimal("1") - exec_price))
-        slippage = 0.015
+        slippage = 0.005  # ~0.5c slippage on liquid game winners (spread < 3c)
 
         # Fee + slippage as a percentage of the contract cost
         friction = (fee + slippage) / float(exec_price) if float(exec_price) > 0 else 0

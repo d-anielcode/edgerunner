@@ -18,7 +18,7 @@ from decimal import Decimal
 
 from rich.console import Console
 
-from config.settings import TRADING_MODE
+from config.settings import DRY_RUN, MAX_BET_DOLLARS, TRADING_MODE
 from data.cache import AgentCache, OrderbookEntry
 from execution.kalshi_client import KalshiClient
 from execution.risk import KellyResult, calculate_kelly_bet
@@ -132,24 +132,35 @@ class OrderManager:
             elif side == "no" and orderbook.best_bid is not None:
                 exec_price = Decimal("1") - orderbook.best_bid  # NO ask = 1 - YES bid
 
-        # Step 4: Place order on Kalshi
-        order_response = await self._kalshi.place_order(
-            ticker=decision.target_market_id,
-            side=side,
-            action="buy",
-            count=kelly.contracts,
-            price=exec_price,
-        )
-
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-
-        if order_response is None:
+        # Step 4: Place order on Kalshi (or log only in dry-run mode)
+        if DRY_RUN:
+            latency_ms = int((time.monotonic() - start_time) * 1000)
             console.print(
-                f"[red]Order placement failed for {decision.target_market_id}[/red]"
+                f"[cyan]DRY RUN: Would {side.upper()} x{kelly.contracts} "
+                f"@ ${exec_price} on {decision.target_market_id} | "
+                f"Edge: {decision.edge:.1%} | Kelly: {kelly.kelly_adjusted:.4f} | "
+                f"Cost: ${kelly.bet_amount:.2f}[/cyan]"
             )
-            return None
+            self._total_executions += 1
+            order_response = {"order_id": "dry-run"}
+        else:
+            order_response = await self._kalshi.place_order(
+                ticker=decision.target_market_id,
+                side=side,
+                action="buy",
+                count=kelly.contracts,
+                price=exec_price,
+            )
 
-        self._total_executions += 1
+            latency_ms = int((time.monotonic() - start_time) * 1000)
+
+            if order_response is None:
+                console.print(
+                    f"[red]Order placement failed for {decision.target_market_id}[/red]"
+                )
+                return None
+
+            self._total_executions += 1
 
         # Step 4: Build Trade model
         trade = Trade(
@@ -176,19 +187,20 @@ class OrderManager:
         # Step 5: Log to Supabase (non-blocking — don't crash if DB fails)
         await self._log_trade(trade)
 
-        # Step 6: Update cache
-        position = Position(
-            kalshi_ticker=decision.target_market_id,
-            side=side,
-            avg_price=kelly.price,
-            quantity=Decimal(str(kelly.contracts)),
-        )
-        cache.update_position(position)
+        # Step 6: Update cache (skip in dry-run — don't alter local state)
+        if not DRY_RUN:
+            position = Position(
+                kalshi_ticker=decision.target_market_id,
+                side=side,
+                avg_price=kelly.price,
+                quantity=Decimal(str(kelly.contracts)),
+            )
+            cache.update_position(position)
 
-        # Update bankroll (subtract cost of trade)
-        trade_cost = kelly.price * Decimal(str(kelly.contracts))
-        new_bankroll = cache.get_bankroll() - trade_cost
-        cache.set_bankroll(new_bankroll)
+            # Update bankroll (subtract cost of trade)
+            trade_cost = kelly.price * Decimal(str(kelly.contracts))
+            new_bankroll = cache.get_bankroll() - trade_cost
+            cache.set_bankroll(new_bankroll)
 
         return trade
 
@@ -226,29 +238,40 @@ class OrderManager:
             if not ticker:
                 continue
 
-            quantity = pos_data.get("total_traded", pos_data.get("quantity", 0))
-            avg_price = pos_data.get("average_price", pos_data.get("avg_price", 0))
+            # Kalshi returns position_fp: positive = YES, negative = NO
+            position_fp = float(pos_data.get("position_fp", pos_data.get("quantity", 0)))
+            if position_fp == 0:
+                continue  # No active position
 
-            # Normalize price from cents to dollars if needed
-            if isinstance(avg_price, int) and avg_price > 1:
-                avg_price = avg_price / 100
+            side = "yes" if position_fp > 0 else "no"
+            quantity = abs(position_fp)
 
-            # Skip positions with invalid prices (settled or empty positions)
-            if not avg_price or float(avg_price) < 0.01 or float(avg_price) > 0.99:
-                continue
+            # Compute avg price from total cost / quantity
+            total_cost = float(pos_data.get("total_traded_dollars", pos_data.get("total_cost_dollars", 0)))
+            avg_price = total_cost / quantity if quantity > 0 else 0
 
-            # Skip positions with zero quantity
-            if not quantity or float(quantity) <= 0:
+            # Fallback: use exposure / quantity
+            if avg_price <= 0 or avg_price >= 1:
+                exposure = float(pos_data.get("market_exposure_dollars", 0))
+                avg_price = exposure / quantity if quantity > 0 else 0
+
+            # Skip if we still can't determine a valid price
+            if avg_price <= 0 or avg_price >= 1:
+                console.print(f"[yellow]Position sync: skipping {ticker} (can't determine avg price)[/yellow]")
                 continue
 
             position = Position(
                 kalshi_ticker=ticker,
-                side=pos_data.get("side", "yes"),
-                avg_price=Decimal(str(avg_price)),
-                quantity=Decimal(str(quantity)),
+                side=side,
+                avg_price=Decimal(str(round(avg_price, 4))),
+                quantity=Decimal(str(int(quantity))),
             )
             cache.update_position(position)
             synced_tickers.add(ticker)
+            console.print(
+                f"[green]Position sync: {side.upper()} x{int(quantity)} on {ticker[:40]} "
+                f"@ ${avg_price:.4f}[/green]"
+            )
 
         # Remove positions from cache that Kalshi doesn't report
         for ticker in list(current_cached.keys()):

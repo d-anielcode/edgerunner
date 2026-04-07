@@ -25,8 +25,8 @@ from execution.kalshi_client import KalshiClient
 console = Console()
 UTC = timezone.utc
 
-# Poll interval in seconds (60s balances freshness vs API rate limits)
-MARKET_POLL_INTERVAL: float = 60.0
+# Poll interval in seconds (30s keeps data fresh; WS is primary, this is fallback)
+MARKET_POLL_INTERVAL: float = 30.0
 
 
 class MarketPoller:
@@ -96,13 +96,9 @@ class MarketPoller:
         best_ask = (Decimal("1") - Decimal(no_levels[-1][0])) if no_levels else None
         ask_volume = Decimal(str(sum(float(level[1]) for level in no_levels[-5:]))) if no_levels else Decimal("0")
 
-        # If one side is missing, infer from the other
-        # YES bid missing but ask exists → bid = ask - 0.01 (minimum spread)
-        if best_bid is None and best_ask is not None:
-            best_bid = max(best_ask - Decimal("0.01"), Decimal("0.01"))
-        # YES ask missing but bid exists → ask = bid + 0.01
-        if best_ask is None and best_bid is not None:
-            best_ask = min(best_bid + Decimal("0.01"), Decimal("0.99"))
+        # If one side is completely missing, skip — one-sided books are unreliable
+        if (best_bid is None and best_ask is not None) or (best_ask is None and best_bid is not None):
+            return None  # Don't infer prices from a one-sided orderbook
 
         # Skip if no meaningful data
         if best_bid is None and best_ask is None:
