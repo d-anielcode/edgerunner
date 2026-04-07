@@ -181,7 +181,11 @@ class EdgeRunner:
         self._market_volumes: dict[str, float] = {}
         # Track initial discovery price — if price moves >20% from discovery,
         # the event is likely in progress (mid-game price spike)
-        self._discovery_prices: dict[str, Decimal] = {}
+        # Persisted to disk so restarts don't lose the baseline
+        from data.discovery_cache import load_discovery_prices
+        self._discovery_prices: dict[str, Decimal] = load_discovery_prices()
+        if self._discovery_prices:
+            console.print(f"[blue]Loaded {len(self._discovery_prices)} discovery prices from cache.[/blue]")
         # Minimum price change (in dollars) before re-analyzing a market
         self._min_price_change: Decimal = Decimal("0.01")
         # Re-analyze even without price change after this many seconds
@@ -515,9 +519,11 @@ class EdgeRunner:
         # Use cache price (always up-to-date) not update price (may be None from WS)
         current_price = orderbook.best_bid or Decimal("0")
 
-        # Track initial discovery price for mid-game detection
+        # Track initial discovery price for mid-game detection (persists to disk)
         if update.ticker not in self._discovery_prices and current_price > 0:
             self._discovery_prices[update.ticker] = current_price
+            from data.discovery_cache import save_discovery_prices
+            save_discovery_prices(self._discovery_prices)
 
         # Mid-game detection: if price moved >20% from discovery, event is likely live
         # This catches sports without ESPN feeds (UCL, EPL, WTA, UFC, etc.)
@@ -1181,6 +1187,12 @@ class EdgeRunner:
             try:
                 console.print("[blue]Re-discovering markets...[/blue]")
                 await self._discover_nba_markets()
+                # Clean up discovery prices for tickers no longer tracked
+                from data.discovery_cache import clear_old_prices, save_discovery_prices
+                self._discovery_prices = clear_old_prices(
+                    self._discovery_prices, DEFAULT_TRACKED_TICKERS
+                )
+                save_discovery_prices(self._discovery_prices)
             except Exception as e:
                 console.print(f"[red]Market re-discovery error: {e}[/red]")
                 break

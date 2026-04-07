@@ -5,6 +5,7 @@
 
 # Runtime data
 data/peak_prices.json
+data/discovery_prices.json
 
 # Large datasets (36GB+)
 data/dataset/
