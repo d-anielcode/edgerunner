@@ -31,6 +31,7 @@ from rich.console import Console
 from alerts.discord import DiscordAlerter
 from config.settings import (
     DEBUG_MODE,
+    ENABLE_NBA_POLLER,
     MAX_POSITION_PCT,
     ORDERBOOK_STALE_THRESHOLD,
     TRADING_MODE,
@@ -178,6 +179,9 @@ class EdgeRunner:
         # Cache market titles and volumes (fetched at startup)
         self._market_titles: dict[str, str] = {}
         self._market_volumes: dict[str, float] = {}
+        # Track initial discovery price — if price moves >20% from discovery,
+        # the event is likely in progress (mid-game price spike)
+        self._discovery_prices: dict[str, Decimal] = {}
         # Minimum price change (in dollars) before re-analyzing a market
         self._min_price_change: Decimal = Decimal("0.01")
         # Re-analyze even without price change after this many seconds
@@ -189,11 +193,13 @@ class EdgeRunner:
             cache=self._cache,
             tracked_tickers=DEFAULT_TRACKED_TICKERS,
         )
-        self._nba_poller: NbaPoller = NbaPoller(
-            queue=self._queue,
-            cache=self._cache,
-            tracked_players=DEFAULT_TRACKED_PLAYERS,
-        )
+        self._nba_poller: NbaPoller | None = None
+        if ENABLE_NBA_POLLER:
+            self._nba_poller = NbaPoller(
+                queue=self._queue,
+                cache=self._cache,
+                tracked_players=DEFAULT_TRACKED_PLAYERS,
+            )
         self._smart_money: SmartMoneyTracker = SmartMoneyTracker(
             queue=self._queue,
             cache=self._cache,
@@ -508,6 +514,23 @@ class EdgeRunner:
         # Skip if price hasn't changed AND analysis is recent
         # Use cache price (always up-to-date) not update price (may be None from WS)
         current_price = orderbook.best_bid or Decimal("0")
+
+        # Track initial discovery price for mid-game detection
+        if update.ticker not in self._discovery_prices and current_price > 0:
+            self._discovery_prices[update.ticker] = current_price
+
+        # Mid-game detection: if price moved >20% from discovery, event is likely live
+        # This catches sports without ESPN feeds (UCL, EPL, WTA, UFC, etc.)
+        disc_price = self._discovery_prices.get(update.ticker)
+        if disc_price and disc_price > 0 and current_price > 0 and _is_gw_ticker:
+            price_drift = abs(current_price - disc_price) / disc_price
+            if price_drift > Decimal("0.20"):
+                console.print(
+                    f"[dim]PREP SKIP {update.ticker[:40]}: price drifted {price_drift:.0%} "
+                    f"from discovery ${disc_price} -> ${current_price} (likely mid-game)[/dim]"
+                )
+                return None
+
         last_price = self._last_analyzed_price.get(update.ticker, Decimal("-1"))
         last_time = self._last_analyzed_time.get(update.ticker, 0.0)
         time_since = time.monotonic() - last_time
@@ -963,7 +986,8 @@ class EdgeRunner:
 
         DEFAULT_TRACKED_PLAYERS.clear()
         DEFAULT_TRACKED_PLAYERS.extend({"name": name} for name in player_names)
-        self._nba_poller._tracked_players = DEFAULT_TRACKED_PLAYERS
+        if self._nba_poller:
+            self._nba_poller._tracked_players = DEFAULT_TRACKED_PLAYERS
 
         # Count by sport
         from config.markets import get_sport
@@ -1043,7 +1067,8 @@ class EdgeRunner:
         # Stop all modules
         await self._feed.stop()
         await self._market_poller.stop()
-        await self._nba_poller.stop()
+        if self._nba_poller:
+            await self._nba_poller.stop()
         await self._smart_money.stop()
         await self._position_monitor.stop()
         await self._arb_scanner.stop()
@@ -1121,10 +1146,9 @@ class EdgeRunner:
         await self._startup()
 
         try:
-            await asyncio.gather(
+            tasks = [
                 self._feed.run(),
                 self._market_poller.run(),
-                self._nba_poller.run(),
                 self._smart_money.run(),
                 self._signal_evaluator(),
                 self._position_monitor.run(),
@@ -1132,8 +1156,10 @@ class EdgeRunner:
                 self._brier_tracker.run(),
                 self._watchdog(),
                 self._auto_shutdown_timer(),
-                return_exceptions=True,
-            )
+            ]
+            if self._nba_poller:
+                tasks.append(self._nba_poller.run())
+            await asyncio.gather(*tasks, return_exceptions=True)
         except asyncio.CancelledError:
             pass
         finally:
