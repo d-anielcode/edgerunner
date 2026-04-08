@@ -159,6 +159,23 @@ NHL_PLAYOFF_VETO = True  # Set False to disable
 NHL_REGULAR_SEASON_END_MONTH_DAY = (4, 16)  # April 16 approximate
 
 
+def _per_price_yes_rate(sport: str, yes_price_cents: int) -> float | None:
+    """
+    Per-cent YES hit rate using linear interpolation. NBA/NHL only.
+
+    Derived from per-cent analysis of 154M trades (TrevorJS dataset).
+    Replaces the 2-bucket EDGE_TABLES for these sports.
+
+    NBA: ~40% at 65c, ~34% at 75c, ~28% at 85c, ~24% at 92c
+    NHL: ~50% at 65c, ~46% at 75c, ~42% at 85c, ~38% at 92c
+    """
+    if sport == "NBA":
+        return max(0.20, 0.50 - (yes_price_cents - 60) * 0.004)
+    if sport == "NHL":
+        return max(0.30, 0.55 - (yes_price_cents - 60) * 0.003)
+    return None  # Other sports use bucket tables
+
+
 class RulesEvaluator:
     """
     Rules-based trading evaluator.
@@ -216,7 +233,7 @@ class RulesEvaluator:
         # Rule 3: YES must be above threshold
         # Weather, CPI, and NFL TD have edge starting at 55c; sports start at 60c
         min_price = Decimal("0.55") if sport in ("WEATHER", "CPI", "NFLTD") else MIN_YES_PRICE
-        max_price = Decimal("0.95") if sport in ("WEATHER", "CPI", "NFLTD") else MAX_YES_PRICE
+        max_price = Decimal("0.95") if sport in ("WEATHER", "CPI", "NFLTD", "NBA", "NHL") else MAX_YES_PRICE
 
         if yes_price < min_price:
             return pass_decision(
@@ -252,13 +269,17 @@ class RulesEvaluator:
         no_price = Decimal("1") - yes_price
         yes_price_cents = int(yes_price * 100)
 
-        # Look up sport-specific empirical edge
-        edge_table = EDGE_TABLES.get(sport, EDGE_TABLE_NBA)
-        actual_yes_rate = 0.65  # default conservative estimate
-        for (min_c, max_c), (hit_rate, _) in edge_table.items():
-            if min_c <= yes_price_cents <= max_c:
-                actual_yes_rate = hit_rate
-                break
+        # Per-price linear model for NBA/NHL, bucket table for others
+        per_price_rate = _per_price_yes_rate(sport, yes_price_cents)
+        if per_price_rate is not None:
+            actual_yes_rate = per_price_rate
+        else:
+            edge_table = EDGE_TABLES.get(sport, EDGE_TABLE_NBA)
+            actual_yes_rate = 0.65  # default conservative estimate
+            for (min_c, max_c), (hit_rate, _) in edge_table.items():
+                if min_c <= yes_price_cents <= max_c:
+                    actual_yes_rate = hit_rate
+                    break
 
         # Edge = market implied YES probability - actual YES probability
         # Market says YES is yes_price (e.g., 70%), actual is ~59% → 11% edge on NO
@@ -283,8 +304,13 @@ class RulesEvaluator:
         q = actual_yes_rate  # Probability NO loses
 
         kelly_raw = (b * p - q) / b if b > 0 else 0
-        kelly_mult = params["kelly_mult"]
-        max_pos = params["max_position"]
+        if per_price_rate is not None:
+            # Per-price model: 0.25x Kelly, 12% cap (data-optimized)
+            kelly_mult = 0.25
+            max_pos = 0.12
+        else:
+            kelly_mult = params["kelly_mult"]
+            max_pos = params["max_position"]
         kelly_fraction = max(0.0, min(kelly_raw * kelly_mult, max_pos))
 
         self._total_signals += 1
@@ -442,6 +468,29 @@ if __name__ == "__main__":
     d11 = evaluator.evaluate_market("KXUFCFIGHT-25NOV15PANTOP-PAN", "PAN wins", ob11)
     console.print(f"  Action: {d11.action} | Edge: {d11.edge:.1%} | Kelly: {d11.kelly_fraction}")
     assert d11.action == "BUY_NO"
+    console.print("  [green]PASS[/green]")
+
+    # Test 12: NBA at 92c — should BUY_NO (was blocked at 90c before, now 95c cap)
+    console.print("\n[cyan]12. NBA heavy favorite at $0.92 (should BUY_NO — expanded cap):[/cyan]")
+    ob12 = OrderbookEntry("KXNBAGAME-26APR08BOSMIA-BOS")
+    ob12.best_bid = Decimal("0.92")
+    ob12.best_ask = Decimal("0.93")
+    d12 = evaluator.evaluate_market("KXNBAGAME-26APR08BOSMIA-BOS", "BOS wins", ob12)
+    console.print(f"  Action: {d12.action} | Edge: {d12.edge:.1%} | Kelly: {d12.kelly_fraction}")
+    assert d12.action == "BUY_NO"
+    console.print("  [green]PASS[/green]")
+
+    # Test 13: Verify per-price Kelly gives different values at different prices
+    console.print("\n[cyan]13. Per-price Kelly: 65c vs 85c vs 92c (should scale up):[/cyan]")
+    for price, label in [(65, "65c"), (85, "85c"), (92, "92c")]:
+        ob_t = OrderbookEntry("KXNBAGAME-26APR08TEST-TST")
+        ob_t.best_bid = Decimal(str(price / 100))
+        ob_t.best_ask = Decimal(str((price + 2) / 100))
+        d_t = evaluator.evaluate_market("KXNBAGAME-26APR08TEST-TST", "TST wins", ob_t)
+        if d_t.action == "BUY_NO":
+            console.print(f"  {label}: Kelly={d_t.kelly_fraction:.4f} | Edge={d_t.edge:.1%}")
+        else:
+            console.print(f"  {label}: PASS ({d_t.rationale[:50]})")
     console.print("  [green]PASS[/green]")
 
     # Stats

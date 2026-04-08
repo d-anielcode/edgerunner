@@ -609,6 +609,24 @@ class EdgeRunner:
 
         # --- PRE-CHECKS (domain-specific, before risk gates) ---
 
+        # NBA volume filter: skip medium-volume games (sharp trader zone, -37% ROI)
+        from config.markets import get_sport as _get_sport_exec
+        _exec_sport = _get_sport_exec(ticker)
+        if _exec_sport == "NBA":
+            _vol = self._market_volumes.get(ticker, 0)
+            if 500_000 <= _vol <= 2_000_000:
+                await log_decision(
+                    ticker=ticker, title=ticker, action=decision.action,
+                    edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                    confidence=decision.confidence_score, rationale=decision.rationale,
+                    market_prob=decision.implied_market_probability,
+                    agent_prob=decision.agent_calculated_probability,
+                    gate_results="PRE-CHECK", accepted=False,
+                    rejection_reason=f"NBA vol filter: {_vol:,.0f} in sharp zone (500K-2M)",
+                    market_type=market_type,
+                )
+                return
+
         # Confidence floor
         if decision.confidence_score < 0.55:
             await log_decision(
