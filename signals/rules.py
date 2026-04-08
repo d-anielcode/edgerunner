@@ -306,12 +306,12 @@ class RulesEvaluator:
 
         kelly_raw = (b * p - q) / b if b > 0 else 0
         if per_price_rate is not None:
-            # Per-price model: 0.25x Kelly, 12% cap (data-optimized)
-            kelly_mult = 0.25
-            max_pos = 0.12
+            # Per-price model: 0.375x Kelly (1.5x of 0.25), 18% cap
+            kelly_mult = 0.375
+            max_pos = 0.18
         else:
-            kelly_mult = params["kelly_mult"]
-            max_pos = params["max_position"]
+            kelly_mult = params["kelly_mult"] * 1.5  # 1.5x Kelly boost
+            max_pos = params["max_position"] * 1.5
         kelly_fraction = max(0.0, min(kelly_raw * kelly_mult, max_pos))
 
         # === SITUATIONAL KELLY MODIFIERS (data-backed) ===
