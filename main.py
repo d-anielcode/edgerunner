@@ -1212,8 +1212,7 @@ class EdgeRunner:
                 )
                 save_discovery_prices(self._discovery_prices)
             except Exception as e:
-                console.print(f"[red]Market re-discovery error: {e}[/red]")
-                break
+                console.print(f"[red]Market re-discovery error: {e} (will retry in 2h)[/red]")
 
             # Check if we've passed the last game's end time + buffer
             if shutdown_target and now >= shutdown_target:
