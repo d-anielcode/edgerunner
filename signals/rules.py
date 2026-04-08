@@ -333,11 +333,17 @@ class RulesEvaluator:
                         kelly_fraction = min(kelly_fraction * 1.5, max_pos)
                         modifiers.append("away_fav_1.5x")
 
-        # Modifier 2: NBA early R1 playoff reduction (Apr 13-30)
-        # Play-in (Apr 13-17) has -27.5% ROI, R1 (Apr 18-30) has +7.1% ROI
-        # Regular season is +24%. Reduce Kelly by 75% during this window.
+        # Modifier 2: April-wide 50% reduction (all sports)
+        # Backtest: April is the only losing month (-71%). Reducing bets by 50%
+        # cuts the loss in half AND increases year-end bankroll by +$1,267.
+        now = datetime.now(timezone.utc)
+        if now.month == 4:
+            kelly_fraction *= 0.50
+            modifiers.append("april_0.5x")
+
+        # Modifier 3: NBA early R1 playoff reduction (Apr 13-30)
+        # Stacks with April reduction above: 0.5 * 0.25 = 0.125x total
         if sport == "NBA":
-            now = datetime.now(timezone.utc)
             if now.month == 4 and 13 <= now.day <= 30:
                 kelly_fraction *= 0.25
                 modifiers.append("nba_early_playoff_0.25x")
