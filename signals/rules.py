@@ -65,10 +65,11 @@ EDGE_TABLE_UFC = {
     (76, 85): (0.622, 0.0),    # 72 markets: YES hits ~62.2%
 }
 
-# NCAA Men's Basketball: Edge in 61-80c range. 81-90c too risky for compounding.
+# NCAA Men's Basketball: Edge across all buckets. 82-90c has +116-145% ROI.
 EDGE_TABLE_NCAAMB = {
     (61, 70): (0.579, 0.0),    # 603 bets: YES hits 57.9%, NO wins 42.1%
     (71, 80): (0.656, 0.0),    # 517 bets: YES hits 65.6%, NO wins 34.4%
+    (82, 90): (0.770, 0.0),    # 529 bets: YES hits ~77%, but +116-145% ROI due to payout ratio
 }
 
 # NCAA Women's Basketball: Decent edge. Season: Nov-Mar.
@@ -313,12 +314,50 @@ class RulesEvaluator:
             max_pos = params["max_position"]
         kelly_fraction = max(0.0, min(kelly_raw * kelly_mult, max_pos))
 
+        # === SITUATIONAL KELLY MODIFIERS (data-backed) ===
+        modifiers = []
+
+        # Modifier 1: Away favorite boost (+47.8% ROI vs +18.3% for home)
+        # Ticker format: KXNBAGAME-26APR07SACGSW-GSW → game_id=SACGSW, team=GSW
+        # Game ID is AWYHOM (away first 3, home last 3)
+        if sport in ("NBA", "NHL"):
+            parts = ticker.split("-")
+            if len(parts) >= 3:
+                game_part = parts[1]  # e.g., 26APR07SACGSW
+                team_part = parts[2]  # e.g., GSW
+                if len(game_part) >= 6 and len(team_part) >= 2:
+                    game_id = game_part[-6:]  # SACGSW
+                    away_team = game_id[:3]
+                    # If the favorite (this market) is the AWAY team, boost Kelly
+                    if team_part == away_team:
+                        kelly_fraction = min(kelly_fraction * 1.5, max_pos)
+                        modifiers.append("away_fav_1.5x")
+
+        # Modifier 2: NBA early R1 playoff reduction (Apr 13-30)
+        # Play-in (Apr 13-17) has -27.5% ROI, R1 (Apr 18-30) has +7.1% ROI
+        # Regular season is +24%. Reduce Kelly by 75% during this window.
+        if sport == "NBA":
+            now = datetime.now(timezone.utc)
+            if now.month == 4 and 13 <= now.day <= 30:
+                kelly_fraction *= 0.25
+                modifiers.append("nba_early_playoff_0.25x")
+
+        # Modifier 3: NFL TD January boost (playoff TDs)
+        # January NFL TD has +92.9% ROI, 67% NO win rate
+        if sport == "NFLTD":
+            now = datetime.now(timezone.utc)
+            if now.month == 1:
+                kelly_fraction = min(kelly_fraction * 1.5, max_pos)
+                modifiers.append("nfltd_jan_1.5x")
+
+        modifier_str = f" [{','.join(modifiers)}]" if modifiers else ""
+
         self._total_signals += 1
 
         rationale = (
             f"[{sport}] Fade favorite: YES priced at ${yes_price} ({market_prob:.0%}) "
             f"but historically hits only {actual_yes_rate:.0%}. "
-            f"Edge: {edge:.0%}. Buy NO at ${no_price}."
+            f"Edge: {edge:.0%}. Buy NO at ${no_price}.{modifier_str}"
         )
 
         console.print(
