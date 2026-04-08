@@ -106,51 +106,6 @@ def _extract_game_id(ticker: str) -> str | None:
     return None
 
 
-def _get_game_outcome_direction(ticker: str, action: str) -> str | None:
-    """
-    Determine which team the agent is betting TO WIN.
-
-    Returns the team abbreviation the agent is betting on, or None.
-
-    Handles multiple ticker formats:
-    - KXNBAGAME-26APR03NOPSAC-NOP          → team is NOP (3rd segment)
-    - KXNBASPREAD-26APR03NOPSAC-SAC7       → team is SAC (3rd segment, strip numbers)
-    - KXNBAPTS-26APR04WASMIA-WASTJOHNSON12-20 → team is WAS (3rd segment, first 3 chars)
-    """
-    import re
-
-    game_id = _extract_game_id(ticker)
-    if not game_id:
-        return None
-
-    ticker_upper = ticker.upper()
-    parts = ticker_upper.split("-")
-    if len(parts) < 3:
-        return None
-
-    # Extract team from the THIRD segment (parts[2]), not the last
-    # This works for all formats:
-    #   NOP, SAC7, WASTJOHNSON12 → first 2-3 alpha chars = team
-    team_match = re.match(r"([A-Z]{2,3})", parts[2])
-    if not team_match:
-        return None
-    team = team_match.group(1)
-
-    # Verify the team is actually in the game_id
-    if team not in game_id:
-        return None
-
-    # Other team is the remaining 3 letters from game_id
-    other_team = game_id.replace(team, "", 1) if team in game_id else None
-
-    if action == "BUY_YES":
-        return team
-    elif action == "BUY_NO":
-        return other_team
-
-    return None
-
-
 class EdgeRunner:
     """
     The main agent orchestrator.
@@ -171,6 +126,10 @@ class EdgeRunner:
         # Shutdown reason (set by auto-shutdown or Ctrl+C)
         self._shutdown_reason: str = "Unknown"
         self._running: bool = False
+        # Daily recap tracking
+        self._daily_trades: int = 0
+        self._daily_wins: int = 0
+        self._daily_start_bankroll: Decimal = Decimal("0")
         # Live game states from ESPN (updated every 30s by watchdog)
         self._live_game_states: dict = {}
         # Track last analyzed price and time per ticker to avoid redundant Claude calls
@@ -303,161 +262,6 @@ class EdgeRunner:
                     f"[red]Signal evaluator error: {type(e).__name__}: {e}[/red]"
                 )
                 await asyncio.sleep(1)
-
-    async def _evaluate_orderbook_update(self, update: OrderbookUpdate) -> None:
-        """
-        Evaluate a single orderbook update for a potential trade.
-
-        Only calls Claude when:
-        1. Price has actually changed since last analysis (saves ~90% of API calls)
-        2. Data is fresh (not stale)
-        3. Spread is reasonable (< $0.05)
-
-        This is the key cost optimization — without it, the agent calls Claude
-        on every 30-second poll even when nothing has changed.
-        """
-        orderbook = self._cache.get_orderbook(update.ticker)
-        if orderbook is None:
-            if DEBUG_MODE:
-                console.print(f"[dim]Evaluator: {update.ticker[:30]} not in cache[/dim]")
-            return
-
-        if DEBUG_MODE and orderbook.best_bid is not None:
-            console.print(
-                f"[dim]Evaluator: {update.ticker[:30]} bid=${orderbook.best_bid} "
-                f"ask=${orderbook.best_ask} spread=${orderbook.spread}[/dim]"
-            )
-
-        # Don't check staleness here — the update we just received from the
-        # queue IS fresh data. The stale check is for the watchdog, not the evaluator.
-
-        # Skip if spread is too wide (pre-filter before spending API budget)
-        if orderbook.spread is not None and orderbook.spread > Decimal("0.05"):
-            return
-
-        # Skip if price hasn't changed AND analysis is recent (cost optimization)
-        current_price = update.best_bid or Decimal("0")
-        last_price = self._last_analyzed_price.get(update.ticker, Decimal("-1"))
-        last_time = self._last_analyzed_time.get(update.ticker, 0.0)
-        time_since = time.monotonic() - last_time
-
-        # Use percentage-based threshold (2% relative change) instead of absolute
-        # This catches small but significant moves on cheap contracts
-        if last_price > 0 and current_price > 0:
-            pct_change = abs(current_price - last_price) / last_price
-            price_changed = pct_change >= Decimal("0.02")
-        else:
-            price_changed = abs(current_price - last_price) >= self._min_price_change
-
-        analysis_stale = time_since >= self._max_stale_analysis
-
-        if not price_changed and not analysis_stale:
-            return
-
-        self._last_analyzed_price[update.ticker] = current_price
-        self._last_analyzed_time[update.ticker] = time.monotonic()
-
-        # Get all available player stats
-        all_stats_dict = self._cache.get_all_player_stats()
-        all_stats_list = list(all_stats_dict.values()) if all_stats_dict else []
-
-        # Get live game data for context
-        live_games = self._cache.get_live_games()
-        game_data = None
-        if live_games:
-            # Build game context from any available live game data
-            game_info = {}
-            for gid, game in live_games.items():
-                game_info[f"{game.away_team} @ {game.home_team}"] = (
-                    f"{game.status} {game.game_time} | "
-                    f"{game.away_team} {game.away_score} - {game.home_team} {game.home_score}"
-                )
-            if game_info:
-                game_data = game_info
-
-        # Get smart money signal if available
-        smart_money = None
-        signals = self._cache.get_smart_money_signals()
-        for title, sig in signals.items():
-            # Match by team abbreviation in ticker
-            ticker_lower = update.ticker.lower()
-            title_lower = title.lower()
-            if any(word in ticker_lower for word in title_lower.split() if len(word) > 2):
-                smart_money = sig
-                break
-
-        # LEGACY: This method is no longer called. Rules engine is used instead.
-        # See _evaluate_with_rules() for the current evaluation path.
-        return
-
-        if not decision.is_actionable:
-            return
-
-        # Validate: for BUY_NO, agent_prob should be < market_prob
-        # If Claude got it backwards, log and skip (don't trade on confused signal)
-        if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
-            console.print(
-                f"[yellow]SKIPPED: Claude returned BUY_NO but agent_prob "
-                f"({decision.agent_calculated_probability:.2f}) > market_prob "
-                f"({decision.implied_market_probability:.2f}). "
-                f"Inconsistent signal — PASSing.[/yellow]"
-            )
-            return
-
-        # DUPLICATE EXPOSURE CHECK: Don't bet the same direction on the same game twice
-        game_id = _extract_game_id(update.ticker)
-        if game_id:
-            bet_direction = _get_game_outcome_direction(update.ticker, decision.action)
-            existing_positions = self._cache.get_positions()
-
-            for pos_ticker, pos in existing_positions.items():
-                pos_game_id = _extract_game_id(pos_ticker)
-                if pos_game_id == game_id:
-                    # Already have a position on this game
-                    # Check if it's the same direction
-                    pos_direction = _get_game_outcome_direction(
-                        pos_ticker, "BUY_YES" if pos.side == "yes" else "BUY_NO"
-                    )
-                    if pos_direction == bet_direction:
-                        console.print(
-                            f"[yellow]BLOCKED: Already exposed to {bet_direction} "
-                            f"on game {game_id} via {pos_ticker}. "
-                            f"Skipping duplicate bet on {update.ticker}.[/yellow]"
-                        )
-                        return
-                    else:
-                        console.print(
-                            f"[yellow]NOTE: Existing {pos_direction} position on "
-                            f"{game_id}, new bet is {bet_direction} (opposite side — "
-                            f"this is a hedge, allowing).[/yellow]"
-                        )
-
-        # Execute the trade (cap bet size at starting bankroll, not inflated by profits)
-        trade = await self._order_manager.execute_trade(
-            decision=decision,
-            cache=self._cache,
-            orderbook=orderbook,
-            max_bankroll=None,  # MAX_BET_DOLLARS cap handles risk instead
-        )
-
-        if trade is not None:
-            # Send Telegram alert
-            bankroll = self._cache.get_bankroll()
-            bankroll_pct = (
-                float(trade.price * trade.quantity / bankroll * 100)
-                if bankroll > 0
-                else 0.0
-            )
-            await self._alerter.send_trade_alert(
-                ticker=trade.kalshi_ticker,
-                side=trade.side,
-                price=trade.price,
-                bet_amount=trade.price * trade.quantity,
-                bankroll_pct=bankroll_pct,
-                rationale=trade.claude_reasoning or "",
-                bankroll=bankroll,
-                latency_ms=trade.execution_latency_ms or 0,
-            )
 
     def _prepare_market_for_analysis(self, update: OrderbookUpdate) -> dict | None:
         """
@@ -784,6 +588,9 @@ class EdgeRunner:
                 accepted=True, bet_amount=float(trade.price * trade.quantity),
                 market_type=market_type,
             )
+
+            # Track for daily recap
+            self._daily_trades += 1
 
             # Discord alert
             await self._alerter.send_trade_alert(
@@ -1180,6 +987,7 @@ class EdgeRunner:
                 self._brier_tracker.run(),
                 self._watchdog(),
                 self._auto_shutdown_timer(),
+                self._daily_recap_task(),
             ]
             if self._nba_poller:
                 tasks.append(self._nba_poller.run())
@@ -1223,6 +1031,68 @@ class EdgeRunner:
                         f"{self._cache.get_position_count()} positions still open. Waiting...[/yellow]"
                     )
                     continue
+
+
+    async def _daily_recap_task(self) -> None:
+        """
+        Send a daily recap to Discord at 12 AM PDT (7 AM UTC).
+        Summarizes the day's trades, P&L, and bankroll.
+        """
+        import pytz
+
+        pdt = pytz.timezone("America/Los_Angeles")
+        console.print("[blue]Daily recap: Active (sends at 12:00 AM PDT daily).[/blue]")
+
+        # Initialize daily tracking
+        self._daily_start_bankroll = self._cache.get_bankroll()
+
+        while self._running:
+            # Check every 60 seconds if it's midnight PDT
+            await asyncio.sleep(60)
+            try:
+                now_pdt = datetime.now(timezone.utc).astimezone(pdt)
+
+                if now_pdt.hour == 0 and now_pdt.minute == 0:
+                    # It's midnight PDT — send recap
+                    current_bankroll = self._cache.get_bankroll()
+                    daily_pnl = current_bankroll - self._daily_start_bankroll
+                    daily_pnl_pct = (
+                        float(daily_pnl / self._daily_start_bankroll * 100)
+                        if self._daily_start_bankroll > 0 else 0.0
+                    )
+                    positions = self._cache.get_position_count()
+                    rules_stats = self._rules.get_stats()
+
+                    pnl_emoji = "+" if daily_pnl >= 0 else ""
+                    recap = (
+                        f"DAILY RECAP ({now_pdt.strftime('%A %B %d, %Y')})\n"
+                        f"Bankroll: ${current_bankroll:.2f}\n"
+                        f"Daily P&L: {pnl_emoji}${daily_pnl:.2f} ({pnl_emoji}{daily_pnl_pct:.1f}%)\n"
+                        f"Trades today: {self._daily_trades}\n"
+                        f"Open positions: {positions}\n"
+                        f"Signals: {rules_stats['total_signals']}/{rules_stats['total_evaluated']} ({rules_stats['signal_rate']})"
+                    )
+
+                    console.print(f"[bold cyan]{recap}[/bold cyan]")
+
+                    # Send to Discord
+                    try:
+                        await self._alerter.send_shutdown(recap)
+                    except Exception:
+                        pass
+
+                    # Reset daily counters
+                    self._daily_trades = 0
+                    self._daily_wins = 0
+                    self._daily_start_bankroll = current_bankroll
+                    self._rules._total_evaluated = 0
+                    self._rules._total_signals = 0
+
+                    # Sleep 90 seconds to avoid double-firing
+                    await asyncio.sleep(90)
+
+            except Exception as e:
+                console.print(f"[red]Daily recap error: {e}[/red]")
 
 
 def main() -> None:

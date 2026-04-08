@@ -374,30 +374,13 @@ class PositionMonitor:
 
         # === RULE 4: INITIAL STOP-LOSS (from entry) ===
         if pnl_pct <= -INITIAL_STOP_LOSS_PCT:
-            console.print(
-                f"[red]STOP-LOSS: {ticker} down {pnl_pct:+.0%} from entry. "
-                f"Asking Claude: exit or hold?[/red]"
-            )
-            try:
-                decision = await self._ask_claude_about_exit(
-                    position, current_price, unrealized_pnl,
-                    f"Down {pnl_pct:.0%} from entry (threshold: {-INITIAL_STOP_LOSS_PCT:.0%})",
-                )
-                return {
-                    "action": decision,
-                    "current_price": current_price,
-                    "unrealized_pnl": unrealized_pnl,
-                    "pnl_pct": pnl_pct,
-                    "reason": f"Stop-loss review: down {pnl_pct:+.0%}. Claude says {decision}.",
-                }
-            except Exception:
-                return {
-                    "action": "sell",
-                    "current_price": current_price,
-                    "unrealized_pnl": unrealized_pnl,
-                    "pnl_pct": pnl_pct,
-                    "reason": f"Stop-loss (Claude unavailable): down {pnl_pct:+.0%}.",
-                }
+            return {
+                "action": "sell",
+                "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl,
+                "pnl_pct": pnl_pct,
+                "reason": f"Stop-loss: down {pnl_pct:+.0%} from entry (threshold: {-INITIAL_STOP_LOSS_PCT:.0%}).",
+            }
 
         # === RULE 5: BANKROLL PROTECTION ===
         if bankroll_loss_pct > BANKROLL_LOSS_THRESHOLD:
@@ -418,61 +401,6 @@ class PositionMonitor:
             "pnl_pct": pnl_pct,
             "reason": f"Holding. P&L: {pnl_pct:+.0%} (${unrealized_pnl:+.2f}){peak_info}",
         }
-
-    async def _ask_claude_about_exit(
-        self,
-        position: Position,
-        current_price: Decimal,
-        unrealized_pnl: Decimal,
-        trigger_reason: str,
-    ) -> str:
-        """
-        Ask Claude whether to exit a losing position.
-
-        Returns "sell" or "hold".
-        """
-        import anthropic
-        from config.settings import ANTHROPIC_API_KEY
-
-        client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-
-        prompt = f"""You are a risk manager for a prediction market trading bot. A position has triggered a stop-loss review.
-
-POSITION:
-- Market: {position.kalshi_ticker}
-- Side: {position.side.upper()}
-- Entry Price: ${position.avg_price}
-- Current Price: ${current_price}
-- Quantity: {position.quantity} contracts
-- Unrealized P&L: ${unrealized_pnl:+.2f}
-- Trigger: {trigger_reason}
-
-Should we EXIT (sell to cut losses) or HOLD (keep the position)?
-
-Rules:
-- If the event hasn't happened yet and fundamentals haven't changed, HOLD may be correct
-- If the price move suggests the market has new information we don't have, EXIT
-- If the loss exceeds 3% of bankroll, strongly consider EXIT
-- Cutting small losses early is better than hoping for recovery
-
-Respond with EXACTLY one word: SELL or HOLD"""
-
-        try:
-            response = await asyncio.wait_for(
-                client.messages.create(
-                    model="claude-haiku-4-5",
-                    max_tokens=10,
-                    messages=[{"role": "user", "content": prompt}],
-                ),
-                timeout=5.0,
-            )
-            answer = response.content[0].text.strip().upper()
-            return "sell" if "SELL" in answer else "hold"
-        except asyncio.TimeoutError:
-            console.print("[yellow]Claude timeout on stop-loss check -- defaulting to SELL[/yellow]")
-            return "sell"
-        except Exception:
-            return "sell"  # Default to cutting losses if Claude is unavailable
 
     async def _exit_position(self, position: Position, current_price: Decimal, reason: str) -> bool:
         """
