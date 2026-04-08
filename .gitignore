@@ -6,6 +6,7 @@
 # Runtime data
 data/peak_prices.json
 data/discovery_prices.json
+data/flow_log.jsonl
 
 # Large datasets (36GB+)
 data/dataset/

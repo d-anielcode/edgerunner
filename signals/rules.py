@@ -326,6 +326,20 @@ class RulesEvaluator:
             f"{sport} | YES=${yes_price} | Edge={edge:.1%} | Kelly={kelly_fraction:.3f}[/green]"
         )
 
+        # Log market flow data for future analysis (passive, no trade impact)
+        try:
+            from data.flow_logger import log_market_flow
+            log_market_flow(
+                ticker=ticker, sport=sport, yes_price=yes_price,
+                bid_volume=orderbook.bid_volume if orderbook else Decimal("0"),
+                ask_volume=orderbook.ask_volume if orderbook else Decimal("0"),
+                ofi=orderbook.ofi if orderbook else 0.0,
+                volume=0,  # Volume added by main.py at execution time
+                edge=edge, kelly=kelly_fraction, action="BUY_NO",
+            )
+        except Exception:
+            pass
+
         return TradeDecision(
             action="BUY_NO",
             target_market_id=ticker,
