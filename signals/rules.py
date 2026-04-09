@@ -201,6 +201,7 @@ class RulesEvaluator:
         title: str,
         orderbook: OrderbookEntry | None,
         espn_game: dict | None = None,
+        companion_signal: dict | None = None,
     ) -> TradeDecision:
         """
         Evaluate a single market using rules.
@@ -355,6 +356,29 @@ class RulesEvaluator:
             if now.month == 1:
                 kelly_fraction = min(kelly_fraction * 1.5, max_pos)
                 modifiers.append("nfltd_jan_1.5x")
+
+        # Modifier 5: Companion market signal (spread/draw price)
+        # NBA/NHL: Low spread = close game = more upsets (+56-159% ROI)
+        # EPL/UCL: High draw = close game = more upsets (+60% upset rate)
+        if companion_signal:
+            sp = companion_signal.get("spread_price")
+            dp = companion_signal.get("draw_price")
+
+            if sport in ("NBA", "NHL") and sp is not None:
+                if sp < 40:
+                    kelly_fraction = min(kelly_fraction * 1.5, max_pos)
+                    modifiers.append(f"spread_close_{sp}c_1.5x")
+                elif sp > 60:
+                    kelly_fraction *= 0.5
+                    modifiers.append(f"spread_blowout_{sp}c_0.5x")
+
+            if sport in ("EPL", "UCL") and dp is not None:
+                if dp >= 25:
+                    kelly_fraction = min(kelly_fraction * 1.5, max_pos)
+                    modifiers.append(f"draw_high_{dp}c_1.5x")
+                elif dp < 18:
+                    kelly_fraction *= 0.0
+                    modifiers.append(f"draw_low_{dp}c_SKIP")
 
         modifier_str = f" [{','.join(modifiers)}]" if modifiers else ""
 

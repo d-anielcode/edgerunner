@@ -623,11 +623,48 @@ class EdgeRunner:
                         "away_score": game.away_score,
                     }
 
+        # Build companion market signal (spread price for NBA/NHL, draw price for EPL/UCL)
+        companion_signal = None
+        try:
+            from config.markets import get_sport as _gs_comp
+            comp_sport = _gs_comp(market_data["ticker"])
+            if comp_sport in ("NBA", "NHL", "EPL", "UCL"):
+                import re
+                # Extract game_key (e.g., 26APR04DETPHI) from ticker
+                comp_match = re.search(r"\d{2}[A-Z]{3}\d{2}[A-Z]{3,8}", market_data["ticker"].upper())
+                if comp_match:
+                    game_key = comp_match.group(0)
+                    all_obs = self._cache.get_all_orderbooks()
+
+                    if comp_sport in ("NBA", "NHL"):
+                        # Find spread market for same game — look for lowest spread number
+                        spread_prefix = "KXNBASPREAD" if comp_sport == "NBA" else "KXNHLSPREAD"
+                        spread_prices = []
+                        for ob_ticker, ob_entry in all_obs.items():
+                            if spread_prefix in ob_ticker.upper() and game_key in ob_ticker.upper():
+                                if ob_entry.best_bid is not None and ob_entry.best_bid > 0:
+                                    spread_prices.append(int(ob_entry.best_bid * 100))
+                        if spread_prices:
+                            # Use the lowest spread price (closest spread = most relevant)
+                            companion_signal = {"spread_price": min(spread_prices), "draw_price": None}
+
+                    elif comp_sport in ("EPL", "UCL"):
+                        # Find TIE/draw market for same game
+                        draw_prefix = "KXEPLGAME" if comp_sport == "EPL" else "KXUCLGAME"
+                        for ob_ticker, ob_entry in all_obs.items():
+                            if draw_prefix in ob_ticker.upper() and game_key in ob_ticker.upper() and "TIE" in ob_ticker.upper():
+                                if ob_entry.best_bid is not None and ob_entry.best_bid > 0:
+                                    companion_signal = {"spread_price": None, "draw_price": int(ob_entry.best_bid * 100)}
+                                    break
+        except Exception:
+            pass  # Never crash for companion lookup
+
         decision = self._rules.evaluate_market(
             ticker=market_data["ticker"],
             title=market_data.get("title", market_data["ticker"]),
             orderbook=market_data.get("orderbook"),
             espn_game=espn_game,
+            companion_signal=companion_signal,
         )
 
         # Debug: log game winner evaluations
