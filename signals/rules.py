@@ -235,7 +235,7 @@ class RulesEvaluator:
         # Rule 3: YES must be above threshold
         # Weather, CPI, and NFL TD have edge starting at 55c; sports start at 60c
         min_price = Decimal("0.55") if sport in ("WEATHER", "CPI", "NFLTD") else MIN_YES_PRICE
-        max_price = Decimal("0.95") if sport in ("WEATHER", "CPI", "NFLTD", "NBA", "NHL") else MAX_YES_PRICE
+        max_price = Decimal("0.95") if sport in ("WEATHER", "CPI", "NFLTD") else MAX_YES_PRICE
 
         if yes_price < min_price:
             return pass_decision(
