@@ -1112,9 +1112,14 @@ class EdgeRunner:
 
                     console.print(f"[bold cyan]{recap}[/bold cyan]")
 
-                    # Send to Discord
+                    # Send to Discord (use _send_embed directly for proper formatting)
                     try:
-                        await self._alerter.send_shutdown(recap)
+                        pnl_color = 0x2ECC71 if daily_pnl >= 0 else 0xE74C3C  # green or red
+                        await self._alerter._send_embed(
+                            title=f"DAILY RECAP ({now_pdt.strftime('%A %B %d')})",
+                            description=recap,
+                            color=pnl_color,
+                        )
                     except Exception:
                         pass
 
