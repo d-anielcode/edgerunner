@@ -763,8 +763,12 @@ class EdgeRunner:
             "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA",     # Weather (NYC, Chicago, Miami)
             "KXHIGHLA", "KXHIGHSF", "KXHIGHHOU",      # Weather (LA, SF, Houston)
             "KXHIGHDEN", "KXHIGHDC", "KXHIGHDAL",     # Weather (Denver, DC, Dallas)
+            "KXHIGHAUS", "KXHIGHPHIL",                 # Weather (Austin, Philly)
             "CPI", "CPICORE", "CPICOREYOY",            # CPI / Inflation
             "KXNFLANYTD",                              # NFL Anytime Touchdown
+            "KXNHLSPREAD", "KXNHLFIRSTGOAL",           # NHL Spreads + First Goal
+            "KXNBA2D",                                 # NBA Double-Double
+            "KXNFLSPREAD",                             # NFL Spreads
         ]:
             cursor = None
             for _ in range(5):

@@ -50,6 +50,11 @@ class MarketCategory(str, Enum):
     WEATHER_HIGH = "weather_high"
     CPI_INFLATION = "cpi_inflation"
     NFL_ANYTIME_TD = "nfl_anytime_td"
+    NHL_SPREAD = "nhl_spread"
+    NHL_FIRST_GOAL = "nhl_first_goal"
+    NBA_SPREAD = "nba_spread"
+    NBA_DOUBLE_DOUBLE = "nba_double_double"
+    NFL_SPREAD = "nfl_spread"
 
 
 # Prefixes for supported sports
@@ -63,6 +68,7 @@ SUPPORTED_SPORT_PREFIXES: list[str] = [
     "KXNCAAMB", "KXNCAAWB", "KXWTA",
     "KXHIGH", "CPI", "CPICORE", "CPICOREYOY",
     "KXNFLANYTD",
+    "KXNHLSPREAD", "KXNHLFIRSTGOAL", "KXNBASPREAD", "KXNBA2D", "KXNFLSPREAD",
 ]
 
 # Game winner ticker patterns we actively trade (fade favorites)
@@ -76,6 +82,10 @@ GAME_WINNER_PATTERNS: list[str] = [
     "KXHIGHHOU", "KXHIGHDEN", "KXHIGHDC", "KXHIGHDAL",
     "CPI", "CPICORE", "CPICOREYOY",
     "KXNFLANYTD",
+    "KXNHLSPREAD", "KXNHLFIRSTGOAL",
+    "KXNBASPREAD", "KXNBA2D",
+    "KXNFLSPREAD",
+    "KXHIGHAUS", "KXHIGHPHIL",
 ]
 
 # Regex patterns for matching tickers to categories.
@@ -99,6 +109,11 @@ MARKET_TICKER_PATTERNS: dict[MarketCategory, re.Pattern[str]] = {
     MarketCategory.WEATHER_HIGH: re.compile(r"KXHIGH", re.IGNORECASE),
     MarketCategory.CPI_INFLATION: re.compile(r"^CPI", re.IGNORECASE),
     MarketCategory.NFL_ANYTIME_TD: re.compile(r"KXNFLANYTD", re.IGNORECASE),
+    MarketCategory.NHL_SPREAD: re.compile(r"KXNHLSPREAD", re.IGNORECASE),
+    MarketCategory.NHL_FIRST_GOAL: re.compile(r"KXNHLFIRSTGOAL", re.IGNORECASE),
+    MarketCategory.NBA_SPREAD: re.compile(r"KXNBASPREAD", re.IGNORECASE),
+    MarketCategory.NBA_DOUBLE_DOUBLE: re.compile(r"KXNBA2D", re.IGNORECASE),
+    MarketCategory.NFL_SPREAD: re.compile(r"KXNFLSPREAD", re.IGNORECASE),
 }
 
 # Which categories the agent actively trades in V1.
@@ -181,6 +196,16 @@ def get_sport(ticker: str) -> str | None:
         return "CPI"
     if "KXNFLANYTD" in upper:
         return "NFLTD"
+    if "KXNHLSPREAD" in upper:
+        return "NHLSPREAD"
+    if "KXNHLFIRSTGOAL" in upper:
+        return "NHLFG"
+    if "KXNBASPREAD" in upper:
+        return "NBASPREAD"
+    if "KXNBA2D" in upper:
+        return "NBA2D"
+    if "KXNFLSPREAD" in upper:
+        return "NFLSPREAD"
     # Fallback to prefix matching
     if upper.startswith(KALSHI_NBA_PREFIX):
         return "NBA"

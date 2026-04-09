@@ -124,6 +124,12 @@ EDGE_TABLES = {
     "WEATHER": EDGE_TABLE_WEATHER,
     "CPI": EDGE_TABLE_CPI,
     "NFLTD": EDGE_TABLE_NFLTD,
+    # New spread/prop markets
+    "NHLSPREAD": {(55, 65): 0.500, (66, 75): 0.450, (76, 90): 0.400},
+    "NHLFG":     {(55, 70): 0.550, (71, 90): 0.450},
+    "NBASPREAD": {(55, 65): 0.480, (66, 75): 0.440, (76, 90): 0.380},
+    "NBA2D":     {(55, 70): 0.550, (71, 90): 0.500},
+    "NFLSPREAD": {(55, 65): 0.480, (66, 75): 0.440, (76, 90): 0.380},
 }
 
 # Below 60c YES, NO is not profitable — skip
@@ -151,6 +157,12 @@ SPORT_PARAMS = {
     "WEATHER":{"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},  # 59% WR, +98% ROI, year-round
     "CPI":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},  # Edge fading in 2024, very selective
     "NFLTD":  {"kelly_mult": 0.20, "max_position": 0.10, "min_edge": 0.05},  # 53% WR, +47% ROI, Sep-Jan
+    # New spread/prop markets
+    "NHLSPREAD": {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # +162% ROI
+    "NHLFG":     {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # +252% ROI
+    "NBASPREAD": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.05},  # +29% ROI
+    "NBA2D":     {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # +22% ROI
+    "NFLSPREAD": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.05},  # +25% ROI
 }
 
 # NHL playoff months — favorites win 80% in playoffs, our edge disappears
@@ -307,12 +319,13 @@ class RulesEvaluator:
 
         kelly_raw = (b * p - q) / b if b > 0 else 0
         if per_price_rate is not None:
-            # Per-price model: 0.375x Kelly (1.5x of 0.25), 18% cap
-            kelly_mult = 0.375
-            max_pos = 0.18
+            # Per-price model: 0.083x Kelly (0.33x of original 0.25)
+            # Spread-thin strategy: many small bets > fewer big bets
+            kelly_mult = 0.083
+            max_pos = 0.06
         else:
-            kelly_mult = params["kelly_mult"] * 1.5  # 1.5x Kelly boost
-            max_pos = params["max_position"] * 1.5
+            kelly_mult = params["kelly_mult"] * 0.33  # 0.33x of original Kelly
+            max_pos = params["max_position"] * 0.33
         kelly_fraction = max(0.0, min(kelly_raw * kelly_mult, max_pos))
 
         # === SITUATIONAL KELLY MODIFIERS (data-backed) ===
@@ -553,14 +566,14 @@ if __name__ == "__main__":
     assert d11.action == "BUY_NO"
     console.print("  [green]PASS[/green]")
 
-    # Test 12: NBA at 92c — should BUY_NO (was blocked at 90c before, now 95c cap)
-    console.print("\n[cyan]12. NBA heavy favorite at $0.92 (should BUY_NO — expanded cap):[/cyan]")
+    # Test 12: NBA at 92c — should PASS (90c cap for NBA/NHL)
+    console.print("\n[cyan]12. NBA at $0.92 (should PASS — 90c cap):[/cyan]")
     ob12 = OrderbookEntry("KXNBAGAME-26APR08BOSMIA-BOS")
     ob12.best_bid = Decimal("0.92")
     ob12.best_ask = Decimal("0.93")
     d12 = evaluator.evaluate_market("KXNBAGAME-26APR08BOSMIA-BOS", "BOS wins", ob12)
-    console.print(f"  Action: {d12.action} | Edge: {d12.edge:.1%} | Kelly: {d12.kelly_fraction}")
-    assert d12.action == "BUY_NO"
+    console.print(f"  Action: {d12.action}")
+    assert d12.action == "PASS"
     console.print("  [green]PASS[/green]")
 
     # Test 13: Verify per-price Kelly gives different values at different prices

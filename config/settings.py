@@ -109,8 +109,8 @@ MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "0.05"))
 FRACTIONAL_KELLY: float = float(os.getenv("FRACTIONAL_KELLY", "0.20"))
 """Multiply full Kelly recommendation by this (default: 0.20 = 20% Kelly)."""
 
-MAX_CONCURRENT_POSITIONS: int = int(os.getenv("MAX_CONCURRENT_POSITIONS", "10"))
-"""Maximum number of open positions at once."""
+MAX_CONCURRENT_POSITIONS: int = int(os.getenv("MAX_CONCURRENT_POSITIONS", "25"))
+"""Maximum number of open positions at once (spread-thin strategy: many small bets)."""
 
 MIN_EDGE_THRESHOLD: float = float(os.getenv("MIN_EDGE_THRESHOLD", "0.05"))
 """Minimum edge (|true_prob - market_prob|) required to trade (default: 5%)."""
