@@ -183,10 +183,10 @@ MAX_SPREAD: Decimal = Decimal("0.05")
 # Only trades profitable price buckets per sport
 SPORT_PARAMS = {
     # --- OOS Jan 2026 CONFIRMED (reliable data) — keep original params ---
-    "NCAAMB": {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # Confirmed within 1%
-    "NFLTD":  {"kelly_mult": 0.20, "max_position": 0.10, "min_edge": 0.05},  # Jan better, off-season now
+    "NCAAMB": {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Confirmed within 1% — Raised: break-even ~10.5%
+    "NFLTD":  {"kelly_mult": 0.20, "max_position": 0.10, "min_edge": 0.10},  # Jan better, off-season now — Raised: break-even ~10.5%
     "WEATHER":{"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},  # Jan better but Feb-Apr data unreliable, keep original
-    "NHLSPREAD": {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # Jan confirmed, Feb-Apr data unreliable, keep original
+    "NHLSPREAD": {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.10},  # Jan confirmed, Feb-Apr data unreliable — Raised: break-even ~10.5%
     # --- OOS Jan 2026 DECAYED (defensive cuts) ---
     "NBA":    {"kelly_mult": 0.04, "max_position": 0.03, "min_edge": 0.15},  # Severe decay: 65% YES vs 49% predicted. Nearly disabled.
     "NHL":    {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.12},  # Optimization: 76-90c best range. Raised min_edge to filter weak 61-75c.
@@ -194,22 +194,22 @@ SPORT_PARAMS = {
     "NFLSPREAD": {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # Decayed in Jan
     # --- NOT VALIDATED (keep original conservative params) ---
     "EPL":    {"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},
-    "UCL":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},
+    "UCL":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Raised: break-even ~10.5%
     "LALIGA": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
-    "WNBA":   {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.08},
-    "UFC":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},
-    "NCAAWB": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},
+    "WNBA":   {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.10},  # Raised: break-even ~10.5%
+    "UFC":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Raised: break-even ~10.5%
+    "NCAAWB": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Raised: break-even ~10.5%
     # "WTA":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: -10% ROI in research; RE-ENABLED comment was wrong
     "MLB":    {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # 50% PT at 76-84c. Conservative.
     # --- NEW: Risk-adjusted optimization (all STRONG ADD, Sharpe > 0.2, MaxDD < $4) ---
     # "MLBTOTAL":{"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # DISABLED: No FLB research for over/under totals
-    "NFLGW":   {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # NFL game winners, 0.244 Sharpe, $4.0 DD
-    "NFLTT":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # NFL team totals, 0.270 Sharpe, $2.9 DD
+    "NFLGW":   {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # NFL game winners, 0.244 Sharpe, $4.0 DD — Raised: break-even ~10.5%
+    "NFLTT":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # NFL team totals, 0.270 Sharpe, $2.9 DD — Raised: break-even ~10.5%
     # "CBA":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # DISABLED: Chinese basketball, no backtest validation
     # "LIGUE1":  {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: French soccer, no OOS data
     # "LOL":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # DISABLED: LoL esports, no validation
     # "ATPCH":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: ATP Challenger, no validation
-    "ATP":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # Year-round, strong FLB + 2.5% retirement premium
+    "ATP":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Year-round, strong FLB + 2.5% retirement premium — Raised: break-even ~10.5%
     "CFB":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.12},  # Not OOS validated — very conservative until Sep data
     "CPI":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
     # --- DROPPED (OOS decayed despite strong backtest) ---

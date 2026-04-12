@@ -190,7 +190,7 @@ class KalshiClient:
         ticker: str,
         side: str,
         action: str,
-        count: int,
+        count: float,       # Changed from int — supports fractional contracts
         price: Decimal,
     ) -> dict | None:
         """
@@ -200,7 +200,7 @@ class KalshiClient:
             ticker: Market ticker (e.g., "KXNBA-LEBRON-PTS-O25")
             side: "yes" or "no"
             action: "buy" or "sell"
-            count: Number of contracts
+            count: Number of contracts (fractional, e.g., 2.46)
             price: Price per contract as Decimal (e.g., Decimal("0.42"))
 
         Returns:
@@ -214,25 +214,20 @@ class KalshiClient:
             console.print(f"[red]Invalid price ${price} — must be $0.01-$0.99.[/red]")
             return None
 
-        # Convert price from dollars (Decimal) to cents (integer)
-        # Kalshi expects price as integer cents (1-99), not dollar strings
-        price_cents = int(price * 100)
-
         # Build order payload
-        price_field = "yes_price" if side == "yes" else "no_price"
+        price_field = "yes_price_dollars" if side == "yes" else "no_price_dollars"
         order_data = {
             "ticker": ticker,
             "side": side,
             "action": action,
-            "count": count,
-            "type": "limit",
-            price_field: price_cents,
+            "count_fp": f"{count:.2f}",
+            price_field: f"{price:.4f}",
             "client_order_id": str(uuid.uuid4()),
         }
 
         console.print(
             f"[green]Kalshi: Placing {action.upper()} {side.upper()} "
-            f"x{count} @ ${price:.2f} ({price_cents}c) on {ticker} "
+            f"x{count:.2f} @ ${price:.4f} (v2 API) on {ticker} "
             f"[{TRADING_MODE.upper()}][/green]"
         )
 

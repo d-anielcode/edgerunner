@@ -53,8 +53,8 @@ class KellyResult(BaseModel):
     bet_amount: Decimal
     """Dollar amount to wager. $0 if rejected."""
 
-    contracts: int
-    """Number of Kalshi contracts to buy (bet_amount / price)."""
+    contracts: float
+    """Number of Kalshi contracts to buy (bet_amount / price). Fractional (2 dp) for Kalshi count_fp."""
 
     kelly_raw: float
     """Full Kelly fraction before adjustments."""
@@ -241,15 +241,15 @@ def calculate_kelly_bet(
     # Round down to nearest cent
     bet_amount = bet_amount.quantize(Decimal("0.01"))
 
-    # Calculate contracts (integer, rounded down)
-    contracts = int(bet_amount / exec_price) if exec_price > 0 else 0
+    # Calculate contracts (fractional, 2 decimal places for Kalshi count_fp)
+    contracts = float((bet_amount / exec_price).quantize(Decimal("0.01"))) if exec_price > 0 else 0.0
 
     # --- Safety Check 4: Minimum viable bet ---
-    # Below $1, the bet isn't worth the fee overhead and tracking
-    if bet_amount < Decimal("1.00") or contracts < 1:
+    # Kalshi supports fractional contracts (March 2026). $0.10 floor prevents dust trades.
+    if bet_amount < Decimal("0.10") or contracts < 0.01:
         return KellyResult(
             bet_amount=Decimal("0"),
-            contracts=0,
+            contracts=0.0,
             kelly_raw=kelly_raw,
             kelly_adjusted=kelly_adjusted,
             price=exec_price,

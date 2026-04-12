@@ -146,7 +146,7 @@ class OrderManager:
         if DRY_RUN:
             latency_ms = int((time.monotonic() - start_time) * 1000)
             console.print(
-                f"[cyan]DRY RUN: Would {side.upper()} x{kelly.contracts} "
+                f"[cyan]DRY RUN: Would {side.upper()} x{kelly.contracts:.2f} "
                 f"@ ${exec_price} on {decision.target_market_id} | "
                 f"Edge: {decision.edge:.1%} | Kelly: {kelly.kelly_adjusted:.4f} | "
                 f"Cost: ${kelly.bet_amount:.2f}[/cyan]"
