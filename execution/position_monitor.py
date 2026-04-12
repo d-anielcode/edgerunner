@@ -472,7 +472,7 @@ class PositionMonitor:
             ticker=position.kalshi_ticker,
             side=position.side,
             action="sell",
-            count=int(position.quantity),
+            count=float(position.quantity),
             price=current_price,
         )
 
@@ -486,6 +486,45 @@ class PositionMonitor:
             #     "exit_reason": reason,
             #     "exit_time": time.monotonic(),
             # }
+
+            # Log exit data for SPRT threshold validation
+            entry = float(position.avg_price)
+            exit_px = float(current_price)
+            peak = float(self._peak_prices.get(position.kalshi_ticker, position.avg_price))
+            max_gain_ratio = (peak - entry) / entry if entry > 0 else 0.0
+            pnl_if_held = None  # Will be filled when settlement is known
+
+            from config.markets import get_sport
+            pos_sport = get_sport(position.kalshi_ticker) or "UNKNOWN"
+
+            console.print(
+                f"[blue]EXIT LOG: {position.kalshi_ticker[:35]} | "
+                f"entry=${entry:.2f} exit=${exit_px:.2f} peak=${peak:.2f} | "
+                f"max_gain={max_gain_ratio:+.0%} | reason={reason[:30]}[/blue]"
+            )
+
+            # Append to exit log file for offline analysis
+            try:
+                import json
+                from datetime import datetime, timezone
+                log_entry = {
+                    "ticker": position.kalshi_ticker,
+                    "sport": pos_sport,
+                    "side": position.side,
+                    "entry_price": entry,
+                    "exit_price": exit_px,
+                    "peak_price": peak,
+                    "max_gain_ratio": round(max_gain_ratio, 4),
+                    "exit_reason": reason,
+                    "quantity": float(position.quantity),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                import os
+                log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "exit_log.jsonl")
+                with open(log_path, "a") as f:
+                    f.write(json.dumps(log_entry) + "\n")
+            except Exception:
+                pass  # Non-critical logging must never crash the trading loop
 
             # Remove from cache and peak tracking (persist to disk)
             self._cache.remove_position(position.kalshi_ticker)
