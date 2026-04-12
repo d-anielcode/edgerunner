@@ -24,19 +24,27 @@ from config.settings import (
     MAX_CONCURRENT_POSITIONS,
     MAX_POSITION_PCT,
     MAX_SPREAD_CENTS,
+    MIN_BANKROLL_FLOOR,
     MIN_EDGE_THRESHOLD,
 )
 
 console = Console()
 
-# Gate 1: Drawdown
-MAX_DRAWDOWN_PCT: float = 0.40  # Pause at 40% session drawdown (backtested max is 30-57%)
+# Gate 0: Bankroll floor (below this, Kelly on discrete contracts breaks down)
+# Gate 1: Drawdown — tiered response from persistent high-water mark
+DRAWDOWN_TIER_1_PCT: float = 0.15  # 15% DD → 50% Kelly
+DRAWDOWN_TIER_2_PCT: float = 0.25  # 25% DD → 25% Kelly
+DRAWDOWN_TIER_3_PCT: float = 0.40  # 40% DD → full halt
+DRAWDOWN_TIER_1_KELLY: float = 0.50
+DRAWDOWN_TIER_2_KELLY: float = 0.25
 MAX_CONSECUTIVE_LOSSES: int = 6  # At 34% NBA win rate, 3-4 loss streaks are normal
 LOSS_COOLDOWN_SECONDS: float = 600.0  # 10 min pause after 6 consecutive losses
 
 # Gate 3: Liquidity
-MIN_VOLUME_24H: int = 500
-MIN_DEPTH_CONTRACTS: int = 0  # Disabled — volume_24h check is sufficient for game winners
+# Lowered from 500 to 50 — new markets (LoL, CBA, MLB Totals) often have 100-400 volume
+# and were profitable in backtest at these levels. 500 was blocking valid trades.
+MIN_VOLUME_24H: int = 50
+MIN_DEPTH_CONTRACTS: int = 0
 
 # Gate 4: Concentration
 MAX_PER_GAME: int = 3
@@ -54,18 +62,20 @@ class GateResult:
 
 @dataclass
 class AllGatesResult:
-    """Result of all 5 gates."""
+    """Result of all gates."""
 
     passed: bool
     gates: list[GateResult] = field(default_factory=list)
     rejection_reason: str = ""
+    kelly_multiplier: float = 1.0  # Tiered drawdown reduces this below 1.0
 
     def summary(self) -> str:
         """One-line summary of gate results."""
         passed_gates = [g.gate_name for g in self.gates if g.passed]
         failed_gates = [f"{g.gate_name}: {g.reason}" for g in self.gates if not g.passed]
+        km = f" (kelly_mult={self.kelly_multiplier:.2f})" if self.kelly_multiplier < 1.0 else ""
         if self.passed:
-            return f"ALL GATES PASSED ({len(passed_gates)}/5)"
+            return f"ALL GATES PASSED ({len(passed_gates)}/6){km}"
         return f"BLOCKED by {failed_gates[0]}" if failed_gates else "BLOCKED (unknown)"
 
 
@@ -85,15 +95,33 @@ class RiskGates:
             log_rejection(result)
     """
 
-    def __init__(self, starting_bankroll: Decimal) -> None:
+    def __init__(self, starting_bankroll: Decimal, persistent_hwm: Decimal | None = None) -> None:
         self._starting_bankroll = starting_bankroll
-        self._high_water_mark = starting_bankroll
+        # Use persistent HWM if provided (survives restarts), else session start
+        self._high_water_mark = persistent_hwm if persistent_hwm is not None else starting_bankroll
         self._consecutive_losses: int = 0
         self._last_loss_time: float = 0.0
         self._halted: bool = False
         self._halt_reason: str = ""
+        self._hwm_callback = None  # Set by main.py to persist HWM changes
 
-    # --- Gate 1: Drawdown Circuit Breaker ---
+    def set_hwm_callback(self, callback):
+        """Set callback to persist HWM changes to disk."""
+        self._hwm_callback = callback
+
+    # --- Gate 0: Bankroll Floor ---
+
+    def _check_bankroll_floor(self, current_bankroll: Decimal) -> GateResult:
+        """Gate 0: Check if bankroll is above minimum for Kelly to work."""
+        if float(current_bankroll) < MIN_BANKROLL_FLOOR:
+            return GateResult(
+                "BANKROLL_FLOOR", False,
+                f"Bankroll ${current_bankroll} < ${MIN_BANKROLL_FLOOR:.0f} floor. "
+                f"Kelly breaks with discrete contracts at this level."
+            )
+        return GateResult("BANKROLL_FLOOR", True, f"Bankroll ${current_bankroll} OK")
+
+    # --- Gate 1: Drawdown Circuit Breaker (tiered) ---
 
     def update_after_trade(self, pnl: Decimal, current_bankroll: Decimal) -> None:
         """
@@ -102,6 +130,8 @@ class RiskGates:
         """
         if current_bankroll > self._high_water_mark:
             self._high_water_mark = current_bankroll
+            if self._hwm_callback:
+                self._hwm_callback(current_bankroll)
 
         if pnl < 0:
             self._consecutive_losses += 1
@@ -109,24 +139,40 @@ class RiskGates:
         else:
             self._consecutive_losses = 0
 
-    def _check_drawdown(self, current_bankroll: Decimal) -> GateResult:
-        """Gate 1: Check if session drawdown exceeds limit."""
+    def _check_drawdown(self, current_bankroll: Decimal) -> tuple[GateResult, float]:
+        """
+        Gate 1: Tiered drawdown from persistent high-water mark.
+        Returns (GateResult, kelly_multiplier).
+        """
         if self._halted:
-            return GateResult("DRAWDOWN", False, f"HALTED: {self._halt_reason}")
+            return GateResult("DRAWDOWN", False, f"HALTED: {self._halt_reason}"), 0.0
 
-        # Check drawdown from starting bankroll
-        if self._starting_bankroll > 0:
+        kelly_mult = 1.0
+
+        # Check drawdown from high-water mark (persistent across restarts)
+        if self._high_water_mark > 0:
             drawdown = float(
-                (self._starting_bankroll - current_bankroll) / self._starting_bankroll
+                (self._high_water_mark - current_bankroll) / self._high_water_mark
             )
-            if drawdown >= MAX_DRAWDOWN_PCT:
+
+            if drawdown >= DRAWDOWN_TIER_3_PCT:
                 self._halted = True
                 self._halt_reason = (
-                    f"Session drawdown {drawdown:.1%} >= {MAX_DRAWDOWN_PCT:.0%}. "
-                    f"Started at ${self._starting_bankroll}, now ${current_bankroll}."
+                    f"Drawdown {drawdown:.1%} >= {DRAWDOWN_TIER_3_PCT:.0%} from HWM. "
+                    f"HWM=${self._high_water_mark}, now ${current_bankroll}."
                 )
                 console.print(f"[red bold]CIRCUIT BREAKER: {self._halt_reason}[/red bold]")
-                return GateResult("DRAWDOWN", False, self._halt_reason)
+                return GateResult("DRAWDOWN", False, self._halt_reason), 0.0
+            elif drawdown >= DRAWDOWN_TIER_2_PCT:
+                kelly_mult = DRAWDOWN_TIER_2_KELLY
+                console.print(
+                    f"[yellow]DD TIER 2: {drawdown:.1%} from HWM — Kelly reduced to {kelly_mult:.0%}[/yellow]"
+                )
+            elif drawdown >= DRAWDOWN_TIER_1_PCT:
+                kelly_mult = DRAWDOWN_TIER_1_KELLY
+                console.print(
+                    f"[yellow]DD TIER 1: {drawdown:.1%} from HWM — Kelly reduced to {kelly_mult:.0%}[/yellow]"
+                )
 
         # Check consecutive losses
         if self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
@@ -137,11 +183,11 @@ class RiskGates:
                     "DRAWDOWN", False,
                     f"{self._consecutive_losses} consecutive losses. "
                     f"Cooling down for {remaining:.0f}s more."
-                )
+                ), 0.0
             # Cooldown expired, reset
             self._consecutive_losses = 0
 
-        return GateResult("DRAWDOWN", True, "OK")
+        return GateResult("DRAWDOWN", True, f"OK (DD from HWM, kelly_mult={kelly_mult:.2f})"), kelly_mult
 
     # --- Gate 2: Fee-Adjusted Edge ---
 
@@ -279,14 +325,23 @@ class RiskGates:
         current_positions: int,
     ) -> AllGatesResult:
         """
-        Run all 5 gates. Returns AllGatesResult with pass/fail for each.
+        Run all 6 gates. Returns AllGatesResult with pass/fail for each.
 
         ALL gates must pass for the trade to proceed.
         """
         results = []
 
-        # Gate 1: Drawdown
-        g1 = self._check_drawdown(current_bankroll)
+        # Gate 0: Bankroll floor
+        g0 = self._check_bankroll_floor(current_bankroll)
+        results.append(g0)
+        if not g0.passed:
+            return AllGatesResult(
+                passed=False, gates=results,
+                rejection_reason=g0.reason,
+            )
+
+        # Gate 1: Drawdown (tiered — returns kelly_multiplier)
+        g1, kelly_mult = self._check_drawdown(current_bankroll)
         results.append(g1)
         if not g1.passed:
             return AllGatesResult(
@@ -323,6 +378,7 @@ class RiskGates:
             passed=all_passed,
             gates=results,
             rejection_reason=rejection,
+            kelly_multiplier=kelly_mult if all_passed else 0.0,
         )
 
     def get_status(self) -> dict:

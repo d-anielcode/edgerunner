@@ -35,7 +35,7 @@ for dir in config signals execution storage alerts deploy keys; do
 done
 
 echo "Syncing data module files..."
-for f in data/__init__.py data/cache.py data/espn_scores.py data/espn_standings.py data/feeds.py data/market_poller.py data/nba_poller.py data/peak_cache.py data/smart_money.py data/flow_logger.py data/discovery_cache.py; do
+for f in data/__init__.py data/cache.py data/espn_scores.py data/espn_standings.py data/feeds.py data/market_poller.py data/nba_poller.py data/peak_cache.py data/smart_money.py data/flow_logger.py data/discovery_cache.py data/hwm_cache.py data/bayesian_cache.py; do
     scp -i "$SSH_KEY" "$f" "${HOST}:${REMOTE_DIR}/data/" 2>/dev/null && echo "  OK: $f" || echo "  SKIP: $f"
 done
 

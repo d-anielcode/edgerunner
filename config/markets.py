@@ -47,6 +47,16 @@ class MarketCategory(str, Enum):
     NCAAMB_GAME_WINNER = "ncaamb_game_winner"
     NCAAWB_GAME_WINNER = "ncaawb_game_winner"
     WTA_MATCH_WINNER = "wta_match_winner"
+    ATP_MATCH_WINNER = "atp_match_winner"
+    CFB_GAME_WINNER = "cfb_game_winner"
+    MLB_GAME_WINNER = "mlb_game_winner"
+    MLB_TOTAL = "mlb_total"
+    NFL_GAME_WINNER = "nfl_game_winner"
+    NFL_TEAM_TOTAL = "nfl_team_total"
+    CBA_GAME_WINNER = "cba_game_winner"
+    LIGUE1_GAME_WINNER = "ligue1_game_winner"
+    LOL_MAP_WINNER = "lol_map_winner"
+    ATP_CHALLENGER = "atp_challenger"
     WEATHER_HIGH = "weather_high"
     CPI_INFLATION = "cpi_inflation"
     NFL_ANYTIME_TD = "nfl_anytime_td"
@@ -65,7 +75,9 @@ KALSHI_NHL_PREFIX: str = "KXNHL"
 SUPPORTED_SPORT_PREFIXES: list[str] = [
     KALSHI_NBA_PREFIX, KALSHI_NHL_PREFIX,
     "KXEPL", "KXUCL", "KXLALIGA", "KXWNBA", "KXUFC",
-    "KXNCAAMB", "KXNCAAWB", "KXWTA",
+    "KXNCAAMB", "KXNCAAWB", "KXWTA", "KXATPMATCH", "KXCFBGAME", "KXMLBGAME",
+    "KXMLBTOTAL", "KXNFLGAME", "KXNFLTEAMTOTAL", "KXCBAGAME", "KXLIGUE",
+    "KXLOLMAP", "KXATPCHALLENGERMATCH",
     "KXHIGH", "CPI", "CPICORE", "CPICOREYOY",
     "KXNFLANYTD",
     "KXNHLSPREAD", "KXNHLFIRSTGOAL", "KXNBASPREAD", "KXNBA2D", "KXNFLSPREAD",
@@ -77,7 +89,9 @@ GAME_WINNER_PATTERNS: list[str] = [
     "KXEPLGAME", "KXUCLGAME", "KXLALIGAGAME",
     "KXWNBAGAME", "KXUFCFIGHT",
     "KXNCAAMBGAME", "KXNCAAWBGAME",
-    "KXWTAMATCH",
+    "KXWTAMATCH", "KXATPMATCH", "KXCFBGAME", "KXMLBGAME",
+    "KXMLBTOTAL", "KXNFLGAME", "KXNFLTEAMTOTAL", "KXCBAGAME", "KXLIGUE",
+    "KXLOLMAP", "KXATPCHALLENGERMATCH",
     "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA", "KXHIGHLA", "KXHIGHSF",
     "KXHIGHHOU", "KXHIGHDEN", "KXHIGHDC", "KXHIGHDAL",
     "CPI", "CPICORE", "CPICOREYOY",
@@ -106,6 +120,16 @@ MARKET_TICKER_PATTERNS: dict[MarketCategory, re.Pattern[str]] = {
     MarketCategory.NCAAMB_GAME_WINNER: re.compile(r"KXNCAAMBGAME", re.IGNORECASE),
     MarketCategory.NCAAWB_GAME_WINNER: re.compile(r"KXNCAAWBGAME", re.IGNORECASE),
     MarketCategory.WTA_MATCH_WINNER: re.compile(r"KXWTAMATCH", re.IGNORECASE),
+    MarketCategory.ATP_MATCH_WINNER: re.compile(r"KXATPMATCH", re.IGNORECASE),
+    MarketCategory.CFB_GAME_WINNER: re.compile(r"KXCFBGAME", re.IGNORECASE),
+    MarketCategory.MLB_GAME_WINNER: re.compile(r"KXMLBGAME", re.IGNORECASE),
+    MarketCategory.MLB_TOTAL: re.compile(r"KXMLBTOTAL", re.IGNORECASE),
+    MarketCategory.NFL_GAME_WINNER: re.compile(r"KXNFLGAME", re.IGNORECASE),
+    MarketCategory.NFL_TEAM_TOTAL: re.compile(r"KXNFLTEAMTOTAL", re.IGNORECASE),
+    MarketCategory.CBA_GAME_WINNER: re.compile(r"KXCBAGAME", re.IGNORECASE),
+    MarketCategory.LIGUE1_GAME_WINNER: re.compile(r"KXLIGUE", re.IGNORECASE),
+    MarketCategory.LOL_MAP_WINNER: re.compile(r"KXLOLMAP", re.IGNORECASE),
+    MarketCategory.ATP_CHALLENGER: re.compile(r"KXATPCHALLENGERMATCH", re.IGNORECASE),
     MarketCategory.WEATHER_HIGH: re.compile(r"KXHIGH", re.IGNORECASE),
     MarketCategory.CPI_INFLATION: re.compile(r"^CPI", re.IGNORECASE),
     MarketCategory.NFL_ANYTIME_TD: re.compile(r"KXNFLANYTD", re.IGNORECASE),
@@ -190,6 +214,26 @@ def get_sport(ticker: str) -> str | None:
         return "NCAAWB"
     if "KXWTAMATCH" in upper:
         return "WTA"
+    if "KXATPMATCH" in upper:
+        return "ATP"
+    if "KXCFBGAME" in upper:
+        return "CFB"
+    if "KXMLBGAME" in upper:
+        return "MLB"
+    if "KXMLBTOTAL" in upper:
+        return "MLBTOTAL"
+    if "KXNFLGAME" in upper:
+        return "NFLGW"
+    if "KXNFLTEAMTOTAL" in upper:
+        return "NFLTT"
+    if "KXCBAGAME" in upper:
+        return "CBA"
+    if "KXLIGUE" in upper:
+        return "LIGUE1"
+    if "KXLOLMAP" in upper:
+        return "LOL"
+    if "KXATPCHALLENGERMATCH" in upper:
+        return "ATPCH"
     if "KXHIGH" in upper:
         return "WEATHER"
     if upper.startswith("CPI"):

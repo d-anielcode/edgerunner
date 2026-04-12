@@ -42,10 +42,10 @@ EDGE_TABLE_EPL = {
     (71, 85): (0.485, 0.0),    # 111 markets: YES hits ~48.5%. Massive edge.
 }
 
-# UCL: Inconsistent — only 76-85c is profitable. Small sample, moderate Kelly.
+# UCL: Only 66-70c and 76-85c profitable. 55-65c and 71-75c confirmed losing.
 EDGE_TABLE_UCL = {
-    (66, 70): (0.400, 0.0),    # 10 markets: YES hits 40% — good edge
-    (76, 85): (0.641, 0.0),    # 39 markets: YES hits 64.1%
+    (66, 70): (0.400, 0.0),    # 10 bets: 60% NO win, +83% ROI, MCL=3
+    (76, 85): (0.641, 0.0),    # 37 bets: 38% NO win, +90% ROI, MCL=5-7
 }
 
 # La Liga: Only 81-85c bucket works (YES hits 58.8%). Very selective.
@@ -53,11 +53,14 @@ EDGE_TABLE_LALIGA = {
     (81, 90): (0.588, 0.0),    # 17 markets: YES hits 58.8% at 81-85c
 }
 
-# WNBA: Sweet spots are 61-65c, 71-75c, and 81-90c. Skip 66-70c (losing bucket).
+# WNBA: Recalibrated from per-price analysis (319 markets, 2025 season).
+# Sweet spots: 55-62c (65% upset), 71-77c (55% upset), 81-87c (45% upset).
+# Danger zones removed: 63-70c (losing), 78-82c (0% NO win), 88c+ (losing).
+# Volume filter: skip <100K volume markets (+94% ROI at 100K-500K vs +7% at <100K).
 EDGE_TABLE_WNBA = {
-    (61, 65): (0.559, 0.0),    # 34 markets: YES hits 55.9%
-    (71, 75): (0.596, 0.0),    # 57 markets: YES hits 59.6%
-    (81, 90): (0.735, 0.0),    # 77 markets: YES hits 73.5% (avg of 64.5% + 82.6%)
+    (55, 62): (0.380, 0.0),    # 55-62c: ~62% upset rate, massive edge
+    (71, 77): (0.550, 0.0),    # 71-77c: ~45% upset rate, strong payout ratio
+    (83, 87): (0.540, 0.0),    # 83-87c: ~46% upset rate, huge payout when it hits
 }
 
 # UFC: Only 76-85c is profitable. Below that, edge is too thin after fees.
@@ -65,24 +68,44 @@ EDGE_TABLE_UFC = {
     (76, 85): (0.622, 0.0),    # 72 markets: YES hits ~62.2%
 }
 
-# NCAA Men's Basketball: Edge across all buckets. 82-90c has +116-145% ROI.
+# NCAA Men's Basketball: Recalibrated — dropped 61-65c (losing, -3% ROI, n=260).
+# 66-70c is strong (+42% ROI), 71-80c solid (+57% ROI). 82-90c high ROI but MCL=19.
 EDGE_TABLE_NCAAMB = {
-    (61, 70): (0.579, 0.0),    # 603 bets: YES hits 57.9%, NO wins 42.1%
-    (71, 80): (0.656, 0.0),    # 517 bets: YES hits 65.6%, NO wins 34.4%
-    (82, 90): (0.770, 0.0),    # 529 bets: YES hits ~77%, but +116-145% ROI due to payout ratio
+    (66, 70): (0.536, 0.0),    # 347 bets: YES hits 53.6%, +42% ROI, MCL=12
+    (71, 80): (0.656, 0.0),    # 517 bets: YES hits 65.6%, +57% ROI, MCL=6
+    (82, 90): (0.770, 0.0),    # 529 bets: YES hits ~77%, +64% ROI, MCL=19 — keep but small size
 }
 
-# NCAA Women's Basketball: Decent edge. Season: Nov-Mar.
+# NCAA Women's Basketball: Recalibrated — dropped 86-90c (-6% ROI, MCL=33, worst in dataset).
+# 61-65c is cleanest (MCL=4, +26% ROI). Keep 81-85c but not 86-90c.
 EDGE_TABLE_NCAAWB = {
-    (61, 70): (0.600, 0.0),    # Estimated from 28.3% overall NO win rate
-    (71, 80): (0.680, 0.0),
-    (81, 90): (0.780, 0.0),
+    (61, 70): (0.600, 0.0),    # 235 bets: +22-26% ROI, MCL=4-12
+    (71, 80): (0.680, 0.0),    # 305 bets: +17-21% ROI, MCL=12-18
+    (81, 85): (0.750, 0.0),    # 154 bets: +44% ROI, MCL=11 — cap at 85c, skip 86-90c
 }
 
-# WTA Tennis: +19.3% ROI, year-round. Individual match winners.
+# WTA Tennis: RE-ENABLED with PT. Hold-to-settlement was -10% but 150% PT = +$25, Sharpe 0.183.
+# Only trade 76-90c range (optimization grid: best Sharpe at this range).
 EDGE_TABLE_WTA = {
-    (61, 75): (0.650, 0.0),    # 1,116 markets: 32% NO win rate overall
-    (76, 85): (0.680, 0.0),
+    (76, 79): (0.695, 0.0),    # 262 markets: YES hits 69.5% at 76-79c
+    (80, 84): (0.803, 0.0),    # 188 markets: YES hits 80.3% at 80-84c
+    (85, 90): (0.790, 0.0),    # 105+137 markets: YES hits ~79% at 85-94c
+}
+
+# MLB Game Winners: Weak FLB on hold, but profitable with 50% PT at 76-90c.
+# Only the 80-84c bucket has meaningful edge (YES hits 57.1% vs 82% implied).
+# Small sample (40 markets at 76-90c) — very conservative params.
+EDGE_TABLE_MLB = {
+    (76, 84): (0.640, 0.0),    # 57 markets: YES hits ~64% at 76-84c (blended)
+}
+
+# ATP Tennis: Year-round. Strong FLB at 71-85c. Fills off-season gap.
+# Retirement premium: ~2.5% of ATP matches end in retirement, settled as NO win.
+# OOS validated from TrevorJS data (2,520 markets).
+EDGE_TABLE_ATP = {
+    (71, 75): (0.650, 0.0),    # 163 markets: YES hits 65.0% at 71-75c. Edge: 8%
+    (76, 80): (0.654, 0.0),    # 127 markets: YES hits 65.4% at 76-80c. Edge: 13%
+    (81, 85): (0.765, 0.0),    # 98 markets: YES hits 76.5% at 81-85c. Edge: 6.5%
 }
 
 # Weather: Temp predictions massively overpriced. All cities combined.
@@ -121,6 +144,19 @@ EDGE_TABLES = {
     "NCAAMB": EDGE_TABLE_NCAAMB,
     "NCAAWB": EDGE_TABLE_NCAAWB,
     "WTA": EDGE_TABLE_WTA,
+    "MLB": EDGE_TABLE_MLB,
+    # New markets from risk-adjusted optimization (all STRONG ADD)
+    "MLBTOTAL": {(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},  # Over/under runs, 82% WR w/ 100% PT
+    "NFLGW":    {(55, 65): 0.520, (66, 75): 0.580, (76, 90): 0.650},  # NFL game winners, 66% WR w/ 100% PT
+    "NFLTT":    {(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},  # NFL team totals, 60% WR w/ 150% PT
+    "CBA":      {(55, 65): 0.500, (66, 75): 0.550, (76, 85): 0.620},  # Chinese basketball, 63% WR w/ 100% PT
+    "LIGUE1":   {(55, 65): 0.480, (66, 75): 0.500, (76, 85): 0.550},  # French soccer, 62% WR w/ 100% PT
+    "LOL":      {(55, 65): 0.500, (66, 75): 0.520, (76, 85): 0.550},  # League of Legends, 67% WR w/ 100% PT
+    "ATPCH":    {(55, 65): 0.520, (66, 75): 0.550, (76, 85): 0.620},  # ATP Challenger tennis, 73% WR w/ 50% PT
+    "ATP": EDGE_TABLE_ATP,
+    # College Football: Not validated yet (season Sep-Jan). Conservative initial params.
+    # Gemini research confirms strong FLB especially at 90c+ favorites.
+    "CFB": {(71, 80): 0.650, (81, 90): 0.750},
     "WEATHER": EDGE_TABLE_WEATHER,
     "CPI": EDGE_TABLE_CPI,
     "NFLTD": EDGE_TABLE_NFLTD,
@@ -128,7 +164,7 @@ EDGE_TABLES = {
     "NHLSPREAD": {(55, 65): 0.500, (66, 75): 0.450, (76, 90): 0.400},
     "NHLFG":     {(55, 70): 0.550, (71, 90): 0.450},
     "NBASPREAD": {(55, 65): 0.480, (66, 75): 0.440, (76, 90): 0.380},
-    "NBA2D":     {(55, 70): 0.550, (71, 90): 0.500},
+    "NBA2D":     {(55, 65): 0.520, (66, 79): 0.580},  # Cap at 79c — 80-89c has 0% NO win
     "NFLSPREAD": {(55, 65): 0.480, (66, 75): 0.440, (76, 90): 0.380},
 }
 
@@ -144,32 +180,50 @@ MAX_SPREAD: Decimal = Decimal("0.05")
 # Sport-specific aggression levels (optimized per-bucket analysis on 154M trades)
 # Only trades profitable price buckets per sport
 SPORT_PARAMS = {
-    "NBA":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # 34% WR, conservative
-    "NHL":    {"kelly_mult": 0.30, "max_position": 0.12, "min_edge": 0.05},  # 47% WR, aggressive
-    "EPL":    {"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},  # 50% WR in 71-85c, aggressive
-    "UCL":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # Small sample, conservative
-    "LALIGA": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},  # Only 81-90c works, very selective
-    "WNBA":   {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.05},  # Skip 66-70c losing bucket
-    "UFC":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # Only 76-85c profitable
-    "NCAAMB": {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # 39% WR but compounding hurts, conservative
-    "NCAAWB": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # 28% WR, +26% ROI, Nov-Mar
-    "WTA":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # 32% WR, keep conservative
-    "WEATHER":{"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},  # 59% WR, +98% ROI, year-round
-    "CPI":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},  # Edge fading in 2024, very selective
-    "NFLTD":  {"kelly_mult": 0.20, "max_position": 0.10, "min_edge": 0.05},  # 53% WR, +47% ROI, Sep-Jan
-    # New spread/prop markets
-    "NHLSPREAD": {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # +162% ROI
-    "NHLFG":     {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # +252% ROI
-    "NBASPREAD": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.05},  # +29% ROI
-    "NBA2D":     {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # +22% ROI
-    "NFLSPREAD": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.05},  # +25% ROI
+    # --- OOS Jan 2026 CONFIRMED (reliable data) — keep original params ---
+    "NCAAMB": {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # Confirmed within 1%
+    "NFLTD":  {"kelly_mult": 0.20, "max_position": 0.10, "min_edge": 0.05},  # Jan better, off-season now
+    "WEATHER":{"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},  # Jan better but Feb-Apr data unreliable, keep original
+    "NHLSPREAD": {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # Jan confirmed, Feb-Apr data unreliable, keep original
+    # --- OOS Jan 2026 DECAYED (defensive cuts) ---
+    "NBA":    {"kelly_mult": 0.04, "max_position": 0.03, "min_edge": 0.15},  # Severe decay: 65% YES vs 49% predicted. Nearly disabled.
+    "NHL":    {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.12},  # Optimization: 76-90c best range. Raised min_edge to filter weak 61-75c.
+    "NBASPREAD": {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # Decayed in Jan
+    "NFLSPREAD": {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # Decayed in Jan
+    # --- NOT VALIDATED (keep original conservative params) ---
+    "EPL":    {"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},
+    "UCL":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},
+    "LALIGA": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
+    "WNBA":   {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.08},
+    "UFC":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},
+    "NCAAWB": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},
+    "WTA":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # RE-ENABLED: 150% PT at 76-90c, Sharpe 0.183
+    "MLB":    {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # 50% PT at 76-84c. Conservative.
+    # --- NEW: Risk-adjusted optimization (all STRONG ADD, Sharpe > 0.2, MaxDD < $4) ---
+    "MLBTOTAL":{"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # Best market found: 0.815 Sharpe, $1.7 DD, 108% ROI
+    "NFLGW":   {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # NFL game winners, 0.244 Sharpe, $4.0 DD
+    "NFLTT":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # NFL team totals, 0.270 Sharpe, $2.9 DD
+    "CBA":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # Chinese basketball, 0.291 Sharpe, $1.4 DD
+    "LIGUE1":  {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # Ligue 1, 0.247 Sharpe, $2.5 DD
+    "LOL":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # LoL esports, 0.356 Sharpe, $2.8 DD
+    "ATPCH":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # ATP Challenger, 0.219 Sharpe, $2.1 DD
+    "ATP":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # Year-round, strong FLB + 2.5% retirement premium
+    "CFB":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.12},  # Not OOS validated — very conservative until Sep data
+    "CPI":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
+    # --- DROPPED (OOS decayed despite strong backtest) ---
+    "NHLFG":     {"kelly_mult": 0.00, "max_position": 0.00, "min_edge": 0.99},  # Disabled
+    "NBA2D":     {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},
 }
 
 # NHL playoff months — favorites win 80% in playoffs, our edge disappears
 # NHL regular season: Oct-Apr | Playoffs: Apr 16 - Jun
-# NBA playoffs are less affected (edge holds) so no veto needed
 NHL_PLAYOFF_VETO = True  # Set False to disable
 NHL_REGULAR_SEASON_END_MONTH_DAY = (4, 16)  # April 16 approximate
+
+# NBA playoff veto — FLB disappears in playoffs, favorites perform to expectation
+# NBA regular season: Oct-Apr | Playoffs: ~Apr 19 - Jun
+NBA_PLAYOFF_VETO = True
+NBA_PLAYOFF_START_MONTH_DAY = (4, 19)  # April 19 approximate
 
 
 def _per_price_yes_rate(sport: str, yes_price_cents: int) -> float | None:
@@ -233,9 +287,15 @@ class RulesEvaluator:
         if sport == "NHL" and NHL_PLAYOFF_VETO:
             now = datetime.now(timezone.utc)
             end_month, end_day = NHL_REGULAR_SEASON_END_MONTH_DAY
-            # After regular season ends, skip NHL until October
             if (now.month > end_month or (now.month == end_month and now.day > end_day)) and now.month < 10:
                 return pass_decision(ticker, "NHL playoffs -- favorites win 80%, edge gone.")
+
+        # Rule 1c: NBA playoff veto — FLB disappears in playoffs, edge is zero
+        if sport == "NBA" and NBA_PLAYOFF_VETO:
+            now = datetime.now(timezone.utc)
+            start_month, start_day = NBA_PLAYOFF_START_MONTH_DAY
+            if (now.month > start_month or (now.month == start_month and now.day >= start_day)) and now.month < 10:
+                return pass_decision(ticker, "NBA playoffs -- FLB disappears, edge gone.")
 
         # Rule 2: Must have orderbook data
         if orderbook is None or orderbook.best_bid is None:
@@ -245,9 +305,10 @@ class RulesEvaluator:
         spread = orderbook.spread
 
         # Rule 3: YES must be above threshold
-        # Weather, CPI, and NFL TD have edge starting at 55c; sports start at 60c
-        min_price = Decimal("0.55") if sport in ("WEATHER", "CPI", "NFLTD") else MIN_YES_PRICE
-        max_price = Decimal("0.95") if sport in ("WEATHER", "CPI", "NFLTD") else MAX_YES_PRICE
+        # Many markets have edge starting at 55c (totals, esports, challenger tennis)
+        LOW_EDGE_SPORTS = ("WEATHER", "CPI", "NFLTD", "MLBTOTAL", "NFLGW", "NFLTT", "CBA", "LIGUE1", "LOL", "ATPCH")
+        min_price = Decimal("0.55") if sport in LOW_EDGE_SPORTS else MIN_YES_PRICE
+        max_price = Decimal("0.95") if sport in LOW_EDGE_SPORTS else MAX_YES_PRICE
 
         if yes_price < min_price:
             return pass_decision(
@@ -283,20 +344,70 @@ class RulesEvaluator:
         no_price = Decimal("1") - yes_price
         yes_price_cents = int(yes_price * 100)
 
-        # Per-price linear model for NBA/NHL, bucket table for others
-        per_price_rate = _per_price_yes_rate(sport, yes_price_cents)
-        if per_price_rate is not None:
-            actual_yes_rate = per_price_rate
+        # Bayesian posterior first (adaptive), then static fallbacks
+        try:
+            from data.bayesian_cache import get_yes_rate as bayesian_yes_rate
+            bayesian_rate = bayesian_yes_rate(sport, yes_price_cents)
+        except Exception:
+            bayesian_rate = None
+
+        if bayesian_rate is not None:
+            # Bayesian model has enough data (5+ updates) — use adaptive rate
+            actual_yes_rate = bayesian_rate
         else:
-            edge_table = EDGE_TABLES.get(sport, EDGE_TABLE_NBA)
-            actual_yes_rate = 0.65  # default conservative estimate
-            for (min_c, max_c), (hit_rate, _) in edge_table.items():
-                if min_c <= yes_price_cents <= max_c:
-                    actual_yes_rate = hit_rate
-                    break
+            # Fall back to static models
+            per_price_rate = _per_price_yes_rate(sport, yes_price_cents)
+            if per_price_rate is not None:
+                actual_yes_rate = per_price_rate
+            else:
+                edge_table = EDGE_TABLES.get(sport, EDGE_TABLE_NBA)
+                actual_yes_rate = 0.65  # default conservative estimate
+                for (min_c, max_c), value in edge_table.items():
+                    if min_c <= yes_price_cents <= max_c:
+                        actual_yes_rate = value[0] if isinstance(value, tuple) else value
+                        break
+
+        # === COMPANION SIGNAL: adjust actual_yes_rate, NOT Kelly (Gemini research) ===
+        # Modifying probability is mathematically correct; modifying Kelly causes variance drag.
+        comp_modifiers = []
+        if companion_signal:
+            sp = companion_signal.get("spread_price")
+            dp = companion_signal.get("draw_price")
+
+            if sport in ("NBA", "NHL") and sp is not None:
+                if sp < 40:
+                    actual_yes_rate = max(0.30, actual_yes_rate - 0.03)
+                    comp_modifiers.append(f"spread_close_{sp}c")
+                elif sp > 60:
+                    actual_yes_rate = min(0.95, actual_yes_rate + 0.03)
+                    comp_modifiers.append(f"spread_blowout_{sp}c")
+
+            if sport in ("EPL", "UCL") and dp is not None:
+                if dp >= 25:
+                    actual_yes_rate = max(0.30, actual_yes_rate - 0.03)
+                    comp_modifiers.append(f"draw_high_{dp}c")
+                elif dp < 18:
+                    actual_yes_rate = min(0.95, actual_yes_rate + 0.05)
+                    comp_modifiers.append(f"draw_low_{dp}c")
+
+        # === VARIANCE-AWARE KELLY: penalize uncertain estimates (DRKP) ===
+        # Add 1 sigma to YES rate = more conservative for NO buyers when uncertain
+        try:
+            from data.bayesian_cache import load_bayesian_state, _bucket_key
+            bstate = load_bayesian_state()
+            bkey = _bucket_key(sport, yes_price_cents)
+            bbucket = bstate.get(bkey)
+            if bbucket and bbucket.get("updates", 0) >= 3:
+                ba, bb = bbucket["alpha"], bbucket["beta"]
+                btotal = ba + bb
+                posterior_std = (ba * bb / (btotal ** 2 * (btotal + 1))) ** 0.5
+                actual_yes_rate = actual_yes_rate + posterior_std
+                comp_modifiers.append(f"var_penalty_{posterior_std:.3f}")
+        except Exception:
+            pass
 
         # Edge = market implied YES probability - actual YES probability
-        # Market says YES is yes_price (e.g., 70%), actual is ~59% → 11% edge on NO
+        # Market says YES is yes_price (e.g., 70%), actual is ~59% -> 11% edge on NO
         market_prob = float(yes_price)
         agent_prob = actual_yes_rate
         edge = market_prob - agent_prob  # Positive = YES is overpriced = NO has edge
@@ -305,10 +416,17 @@ class RulesEvaluator:
         params = SPORT_PARAMS.get(sport, SPORT_PARAMS["NBA"])
         min_edge = params["min_edge"]
 
-        if edge < min_edge:
+        # Fee-aware edge: subtract Maker fee impact before threshold comparison
+        # Fee formula: 0.07 * P * (1-P) [Taker rate], expressed as % of contract cost
+        no_price_f = float(no_price)
+        fee_impact = 0.07 * no_price_f * (1 - no_price_f) / no_price_f if no_price_f > 0 else 0
+        edge_net = edge - fee_impact
+
+        if edge_net < min_edge:
             return pass_decision(
                 ticker,
-                f"Edge {edge:.1%} too small for {sport} (min {min_edge:.0%}, market {market_prob:.0%} vs actual {agent_prob:.0%}).",
+                f"Net edge {edge_net:.1%} < min {min_edge:.0%} for {sport} "
+                f"(gross {edge:.1%}, fee impact {fee_impact:.1%}).",
             )
 
         # Kelly fraction based on edge and payout, with sport-specific aggression
@@ -318,14 +436,10 @@ class RulesEvaluator:
         q = actual_yes_rate  # Probability NO loses
 
         kelly_raw = (b * p - q) / b if b > 0 else 0
-        if per_price_rate is not None:
-            # Per-price model: 0.083x Kelly (0.33x of original 0.25)
-            # Spread-thin strategy: many small bets > fewer big bets
-            kelly_mult = 0.083
-            max_pos = 0.06
-        else:
-            kelly_mult = params["kelly_mult"] * 0.33  # 0.33x of original Kelly
-            max_pos = params["max_position"] * 0.33
+        # 0.50x scaling — backed by Kelly scaling backtest showing best risk/reward
+        # (0.33x was too conservative for high-conviction 76-90c trades)
+        kelly_mult = params["kelly_mult"] * 0.50
+        max_pos = params["max_position"] * 0.50
         kelly_fraction = max(0.0, min(kelly_raw * kelly_mult, max_pos))
 
         # === SITUATIONAL KELLY MODIFIERS (data-backed) ===
@@ -370,28 +484,19 @@ class RulesEvaluator:
                 kelly_fraction = min(kelly_fraction * 1.5, max_pos)
                 modifiers.append("nfltd_jan_1.5x")
 
-        # Modifier 5: Companion market signal (spread/draw price)
-        # NBA/NHL: Low spread = close game = more upsets (+56-159% ROI)
-        # EPL/UCL: High draw = close game = more upsets (+60% upset rate)
-        if companion_signal:
-            sp = companion_signal.get("spread_price")
-            dp = companion_signal.get("draw_price")
+        # Companion signals now adjust actual_yes_rate BEFORE edge calc (see above)
+        # No longer modify Kelly directly — that causes variance drag (Gemini research)
+        modifiers.extend(comp_modifiers)
 
-            if sport in ("NBA", "NHL") and sp is not None:
-                if sp < 40:
-                    kelly_fraction = min(kelly_fraction * 1.5, max_pos)
-                    modifiers.append(f"spread_close_{sp}c_1.5x")
-                elif sp > 60:
-                    kelly_fraction *= 0.5
-                    modifiers.append(f"spread_blowout_{sp}c_0.5x")
-
-            if sport in ("EPL", "UCL") and dp is not None:
-                if dp >= 25:
-                    kelly_fraction = min(kelly_fraction * 1.5, max_pos)
-                    modifiers.append(f"draw_high_{dp}c_1.5x")
-                elif dp < 18:
-                    kelly_fraction *= 0.0
-                    modifiers.append(f"draw_low_{dp}c_SKIP")
+        # === SIMPLIFIED MAB: sport confidence multiplier ===
+        try:
+            from data.bayesian_cache import get_sport_confidence
+            sport_conf = get_sport_confidence(sport)
+            if sport_conf != 1.0:
+                kelly_fraction *= sport_conf
+                modifiers.append(f"mab_{sport_conf:.2f}x")
+        except Exception:
+            pass
 
         modifier_str = f" [{','.join(modifiers)}]" if modifiers else ""
 

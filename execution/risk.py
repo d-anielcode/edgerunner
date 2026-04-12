@@ -35,11 +35,11 @@ from signals.schemas import TradeDecision
 
 console = Console()
 
-# Kalshi fee formula constants
+# Kalshi fee formula constants — Taker rate (crossing the spread)
 KALSHI_FEE_PER_CONTRACT: Decimal = Decimal("0.07")
 
 # Assumed adverse slippage on fill price
-SLIPPAGE_BUFFER: Decimal = Decimal("0.015")
+SLIPPAGE_BUFFER: Decimal = Decimal("0.005")
 
 
 class KellyResult(BaseModel):
@@ -80,13 +80,14 @@ class KellyResult(BaseModel):
 
 def calculate_kalshi_fee(price: Decimal) -> Decimal:
     """
-    Calculate the Kalshi fee per contract.
+    Calculate the Kalshi fee per contract with ceil() rounding.
 
-    Kalshi fee formula: $0.07 * P * (1 - P)
-    This is parabolic — max fee near $0.50, tapers to zero at extremes.
-    Capped at ~$0.0175 for takers.
+    Kalshi fee formula: fee_rate * P * (1 - P), rounded UP to nearest cent.
+    Maker rate: 0.0175, Taker rate: 0.07.
     """
-    return KALSHI_FEE_PER_CONTRACT * price * (Decimal("1") - price)
+    import math
+    raw = float(KALSHI_FEE_PER_CONTRACT * price * (Decimal("1") - price))
+    return Decimal(str(math.ceil(raw * 100) / 100))
 
 
 def calculate_kelly_bet(
@@ -218,7 +219,13 @@ def calculate_kelly_bet(
         )
 
     # --- Apply fractional Kelly ---
-    kelly_adjusted = kelly_raw * FRACTIONAL_KELLY
+    # Use the sport-specific Kelly from rules.py (decision.kelly_fraction) if available.
+    # This respects SPORT_PARAMS per-sport aggression levels and OOS-validated cuts.
+    # Falls back to global FRACTIONAL_KELLY only if decision doesn't carry a kelly_fraction.
+    if decision.kelly_fraction > 0:
+        kelly_adjusted = decision.kelly_fraction
+    else:
+        kelly_adjusted = kelly_raw * FRACTIONAL_KELLY
 
     # --- Cap at max position percentage ---
     kelly_adjusted = min(kelly_adjusted, MAX_POSITION_PCT)
@@ -238,7 +245,8 @@ def calculate_kelly_bet(
     contracts = int(bet_amount / exec_price) if exec_price > 0 else 0
 
     # --- Safety Check 4: Minimum viable bet ---
-    if bet_amount < Decimal("0.01") or contracts < 1:
+    # Below $1, the bet isn't worth the fee overhead and tracking
+    if bet_amount < Decimal("1.00") or contracts < 1:
         return KellyResult(
             bet_amount=Decimal("0"),
             contracts=0,

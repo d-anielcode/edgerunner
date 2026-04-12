@@ -119,18 +119,28 @@ class OrderManager:
                 )
                 return None
 
-        # For player props: use the ASK price (cross the spread) instead of BID
-        # Limit orders at the bid on player props only fill when you're about to lose
-        # (adverse selection). Paying the ask guarantees a fill at a fair price.
+        # Maker pricing: post limit orders 1c inside the spread instead of crossing it.
+        # This makes us a Maker (1.75% fee) instead of Taker (7% fee) — 75% fee reduction.
+        # Exception: player props still cross the spread (adverse selection concern).
+        from config.settings import MAKER_OFFSET_CENTS
         exec_price = kelly.price
         is_prop = decision.target_market_id.upper().startswith(
             ("KXNBAPTS", "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBABLK", "KXNBASTL")
         )
         if is_prop and orderbook:
+            # Props: cross the spread for guaranteed fill (adverse selection)
             if side == "yes" and orderbook.best_ask is not None:
-                exec_price = orderbook.best_ask  # Pay the ask for immediate fill
+                exec_price = orderbook.best_ask
             elif side == "no" and orderbook.best_bid is not None:
-                exec_price = Decimal("1") - orderbook.best_bid  # NO ask = 1 - YES bid
+                exec_price = Decimal("1") - orderbook.best_bid
+        elif MAKER_OFFSET_CENTS > 0 and not is_prop:
+            # Maker pricing: post 1c better than market for Maker fee tier
+            offset = Decimal(str(MAKER_OFFSET_CENTS)) / Decimal("100")
+            exec_price = max(Decimal("0.01"), kelly.price - offset)
+            console.print(
+                f"[blue]Maker pricing: {decision.target_market_id[:30]} "
+                f"base=${kelly.price} → maker=${exec_price} (offset {MAKER_OFFSET_CENTS}c)[/blue]"
+            )
 
         # Step 4: Place order on Kalshi (or log only in dry-run mode)
         if DRY_RUN:

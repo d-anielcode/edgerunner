@@ -338,7 +338,8 @@ class KalshiClient:
             return None
 
     async def get_markets(
-        self, status: str = "open", limit: int = 100, cursor: str | None = None
+        self, status: str = "open", limit: int = 100, cursor: str | None = None,
+        series_ticker: str | None = None,
     ) -> dict:
         """
         Fetch a list of markets with optional filters.
@@ -346,6 +347,8 @@ class KalshiClient:
         Returns dict with 'markets' list and 'cursor' for pagination.
         """
         path = f"/markets?status={status}&limit={limit}"
+        if series_ticker:
+            path += f"&series_ticker={series_ticker}"
         if cursor:
             path += f"&cursor={cursor}"
         try:

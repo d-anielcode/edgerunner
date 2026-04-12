@@ -138,6 +138,9 @@ class EdgeRunner:
         # Cache market titles and volumes (fetched at startup)
         self._market_titles: dict[str, str] = {}
         self._market_volumes: dict[str, float] = {}
+        # Track tickers with resting (unfilled) maker orders to prevent duplicates
+        # Maps ticker -> timestamp when order was placed. Expires after RESTING_ORDER_TIMEOUT_SECONDS.
+        self._resting_order_times: dict[str, float] = {}
         # Track initial discovery price — if price moves >20% from discovery,
         # the event is likely in progress (mid-game price spike)
         # Persisted to disk so restarts don't lose the baseline
@@ -192,6 +195,9 @@ class EdgeRunner:
         self._risk_gates: RiskGates | None = None
         self._brier_tracker: BrierTracker = BrierTracker(
             kalshi_client=self._kalshi_client,
+            risk_gates=None,  # Set in _startup after risk_gates is initialized
+            cache=self._cache,
+            alerter=self._alerter,
         )
 
     async def _signal_evaluator(self) -> None:
@@ -431,6 +437,22 @@ class EdgeRunner:
                 )
                 return
 
+        # WNBA volume filter: skip low-volume markets (<100K) — only +7% ROI vs +94% at 100K-500K
+        if _exec_sport == "WNBA":
+            _vol = self._market_volumes.get(ticker, 0)
+            if _vol < 100_000:
+                await log_decision(
+                    ticker=ticker, title=ticker, action=decision.action,
+                    edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                    confidence=decision.confidence_score, rationale=decision.rationale,
+                    market_prob=decision.implied_market_probability,
+                    agent_prob=decision.agent_calculated_probability,
+                    gate_results="PRE-CHECK", accepted=False,
+                    rejection_reason=f"WNBA vol filter: {_vol:,.0f} < 100K (low vol = no edge)",
+                    market_type=market_type,
+                )
+                return
+
         # Confidence floor
         if decision.confidence_score < 0.55:
             await log_decision(
@@ -464,7 +486,7 @@ class EdgeRunner:
                     )
                     return
 
-        # Duplicate and opposite-side block
+        # Duplicate and opposite-side block (includes resting orders)
         existing_positions = self._cache.get_positions()
         if ticker in existing_positions:
             existing_side = existing_positions[ticker].side
@@ -472,6 +494,15 @@ class EdgeRunner:
             if existing_side == new_side:
                 # Already holding this exact position — don't double up
                 return
+        # Block if we have a resting (unfilled) maker order on this ticker
+        import time as _time
+        from config.settings import RESTING_ORDER_TIMEOUT_SECONDS
+        if ticker in self._resting_order_times:
+            elapsed = _time.monotonic() - self._resting_order_times[ticker]
+            if elapsed < RESTING_ORDER_TIMEOUT_SECONDS:
+                return  # Order still resting, don't duplicate
+            else:
+                del self._resting_order_times[ticker]  # Expired, allow new order
             if existing_side != new_side:
                 await log_decision(
                     ticker=ticker, title=ticker, action=decision.action,
@@ -531,6 +562,22 @@ class EdgeRunner:
 
         game_id = _extract_game_id(ticker)
 
+        # Correlation-aware sizing: if we already hold a position on the same game
+        # (e.g., NBA game winner + NBA spread), reduce Kelly by 50% to avoid
+        # doubling exposure on a single event outcome.
+        if game_id and existing_positions:
+            correlated = sum(
+                1 for t in existing_positions
+                if _extract_game_id(t) == game_id and t != ticker
+            )
+            if correlated > 0:
+                original_kelly = decision.kelly_fraction
+                decision.kelly_fraction *= 0.5
+                console.print(
+                    f"[yellow]Correlation: {correlated} existing position(s) on game {game_id} "
+                    f"— Kelly {original_kelly:.4f} -> {decision.kelly_fraction:.4f}[/yellow]"
+                )
+
         gate_result = self._risk_gates.check_all(
             edge=decision.edge,
             exec_price=exec_price,
@@ -539,7 +586,8 @@ class EdgeRunner:
             depth=int(orderbook.bid_volume + orderbook.ask_volume) if orderbook else 0,
             game_id=game_id,
             positions=existing_positions,
-            current_bankroll=self._cache.get_bankroll(),
+            # Use portfolio value (cash + positions) for drawdown, cash for concentration
+            current_bankroll=self._cache.get_portfolio_value(),
             new_bet_amount=kelly.bet_amount if not kelly.rejected else Decimal("0"),
             current_positions=self._cache.get_position_count(),
         )
@@ -560,6 +608,50 @@ class EdgeRunner:
             )
             return
 
+        # --- APPLY TIERED DRAWDOWN KELLY MULTIPLIER ---
+
+        if gate_result.kelly_multiplier < 1.0:
+            original_kelly = decision.kelly_fraction
+            decision.kelly_fraction *= gate_result.kelly_multiplier
+            console.print(
+                f"[yellow]DD Kelly reduction: {original_kelly:.4f} -> "
+                f"{decision.kelly_fraction:.4f} (x{gate_result.kelly_multiplier:.2f})[/yellow]"
+            )
+
+            # Drawdown-adaptive strategy: during DD, only trade highest-Sharpe markets
+            # Skip marginal sports (Tier 3) to focus capital on best risk-adjusted edges
+            from config.markets import get_sport as _dd_sport
+            _dd_s = _dd_sport(ticker)
+            TIER3_SPORTS = ("NCAAMB", "NFLGW", "NBA", "WNBA", "WTA", "LALIGA", "ATPCH", "LIGUE1")
+            if _dd_s in TIER3_SPORTS:
+                await log_decision(
+                    ticker=ticker, title=ticker, action=decision.action,
+                    edge=decision.edge, kelly_fraction=decision.kelly_fraction,
+                    confidence=decision.confidence_score, rationale=decision.rationale,
+                    market_prob=decision.implied_market_probability,
+                    agent_prob=decision.agent_calculated_probability,
+                    gate_results="DD_ADAPTIVE", accepted=False,
+                    rejection_reason=f"Drawdown mode: {_dd_s} is Tier 3 (low Sharpe) — skipping",
+                    market_type=market_type,
+                )
+                return
+
+        # --- DYNAMIC KELLY: scale based on bankroll size ---
+        # At low bankroll, individual bets are small enough that higher Kelly is safe.
+        # At high bankroll, the $200 max cap limits upside anyway.
+        portfolio = float(self._cache.get_portfolio_value())
+        if portfolio < 300:
+            bankroll_scale = 1.30  # Aggressive at low bankroll
+        elif portfolio < 1000:
+            bankroll_scale = 1.00  # Normal
+        elif portfolio < 5000:
+            bankroll_scale = 0.80  # Conservative as we grow
+        else:
+            bankroll_scale = 0.66  # Protective at scale
+
+        if bankroll_scale != 1.0:
+            decision.kelly_fraction *= bankroll_scale
+
         # --- EXECUTE ---
 
         trade = await self._order_manager.execute_trade(
@@ -570,6 +662,10 @@ class EdgeRunner:
         )
 
         if trade is not None:
+            # Track resting order to prevent duplicate maker orders
+            import time as _time
+            self._resting_order_times[ticker] = _time.monotonic()
+
             bankroll = self._cache.get_bankroll()
             bankroll_pct = (
                 float(trade.price * trade.quantity / bankroll * 100)
@@ -593,6 +689,11 @@ class EdgeRunner:
             self._daily_trades += 1
 
             # Discord alert
+            from config.markets import get_sport as _gs
+            from execution.position_monitor import SPORT_PROFIT_TAKE, AUTO_PROFIT_TAKE_PCT
+            _trade_sport = _gs(trade.kalshi_ticker)
+            _trade_pt = SPORT_PROFIT_TAKE.get(_trade_sport, AUTO_PROFIT_TAKE_PCT) * 100
+
             await self._alerter.send_trade_alert(
                 ticker=trade.kalshi_ticker,
                 side=trade.side,
@@ -602,6 +703,9 @@ class EdgeRunner:
                 rationale=trade.claude_reasoning or "",
                 bankroll=bankroll,
                 latency_ms=trade.execution_latency_ms or 0,
+                portfolio_value=self._cache.get_portfolio_value(),
+                sport=_trade_sport,
+                profit_take_pct=_trade_pt,
             )
 
     async def _evaluate_with_rules(self, market_data: dict) -> None:
@@ -690,6 +794,9 @@ class EdgeRunner:
         - Budget usage
         """
         console.print("[blue]Watchdog: Started.[/blue]")
+        import time as _wt
+        self._last_bankroll_sync = _wt.monotonic()
+        self._last_known_bankroll = self._cache.get_bankroll()
 
         while self._running:
             await asyncio.sleep(WATCHDOG_INTERVAL)
@@ -698,6 +805,31 @@ class EdgeRunner:
             try:
                 from data.espn_scores import fetch_live_scores
                 self._live_game_states = await fetch_live_scores()
+            except Exception:
+                pass
+
+            # Periodic bankroll + position sync (every 5 minutes)
+            # Detects deposits, settled positions, and bankroll changes
+            try:
+                if _wt.monotonic() - self._last_bankroll_sync > 300:
+                    await self._order_manager.sync_bankroll(self._cache)
+                    await self._order_manager.sync_positions(self._cache)
+                    # Use portfolio value (cash + positions) for HWM tracking
+                    portfolio_val = self._cache.get_portfolio_value()
+                    cash_bal = self._cache.get_bankroll()
+                    if cash_bal > self._last_known_bankroll:
+                        console.print(
+                            f"[green]Cash increased: ${self._last_known_bankroll} -> ${cash_bal} "
+                            f"(deposit or wins settled) | Portfolio: ${portfolio_val}[/green]"
+                        )
+                    # Update HWM based on portfolio value, not just cash
+                    if self._risk_gates and portfolio_val > self._risk_gates._high_water_mark:
+                        self._risk_gates._high_water_mark = portfolio_val
+                        from data.hwm_cache import save_hwm
+                        save_hwm(portfolio_val)
+                        console.print(f"[green]New HWM: ${portfolio_val} (portfolio value)[/green]")
+                    self._last_known_bankroll = cash_bal
+                    self._last_bankroll_sync = _wt.monotonic()
             except Exception:
                 pass
 
@@ -753,21 +885,34 @@ class EdgeRunner:
             "KXNBAGAME", "KXNBASPREAD", "KXNBAPTS",  # NBA
             "KXNHLGAME",                               # NHL
             "KXEPLGAME",                               # EPL Soccer
-            "KXUCLGAME",                               # Champions League
+            # "KXUCLGAME",                             # UCL — disabled: -49% ROI after slippage
             "KXLALIGAGAME",                            # La Liga
             "KXWNBAGAME",                              # WNBA
             "KXUFCFIGHT",                              # UFC/MMA
             "KXNCAAMBGAME",                            # NCAA Men's Basketball
             "KXNCAAWBGAME",                            # NCAA Women's Basketball
-            "KXWTAMATCH",                              # WTA Tennis
-            "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA",     # Weather (NYC, Chicago, Miami)
-            "KXHIGHLA", "KXHIGHSF", "KXHIGHHOU",      # Weather (LA, SF, Houston)
-            "KXHIGHDEN", "KXHIGHDC", "KXHIGHDAL",     # Weather (Denver, DC, Dallas)
-            "KXHIGHAUS", "KXHIGHPHIL",                 # Weather (Austin, Philly)
+            "KXWTAMATCH",                              # WTA Tennis — RE-ENABLED: 150% PT at 76-90c rescues it (Sharpe 0.183)
+            "KXATPMATCH",                              # ATP Tennis — year-round, strong FLB 71-85c, +2.5% retirement premium
+            "KXCFBGAME",                               # College Football — Sep-Jan, strong FLB at 90c+, conservative until validated
+            "KXMLBGAME",                               # MLB — 50% PT at 76-84c, very conservative (small sample)
+            "KXMLBTOTAL",                              # MLB Totals — BEST new market: 0.815 Sharpe, 82% WR, 100% PT
+            "KXNFLGAME",                               # NFL Game Winners — 0.244 Sharpe, 66% WR, 100% PT
+            # "KXNFLTEAMTOTAL",                        # NFL Team Totals — disabled: +16% ROI after slippage (below 20% threshold)
+            "KXCBAGAME",                               # CBA (Chinese Basketball) — +39% ROI, 57% WR
+            # "KXLIGUE",                               # Ligue 1 — disabled: +4% ROI after slippage (below 20% threshold)
+            "KXLOLMAP",                                # League of Legends — +69% ROI, 75% WR
+            # "KXATPCHALLENGERMATCH",                  # ATP Challenger — disabled: +0.2% ROI after slippage (breakeven)
+            # Weather DISABLED: These are categorical range markets (5-50c per bucket),
+            # NOT binary favorites. No FLB to exploit — avg YES price is 22c.
+            # "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA",
+            # "KXHIGHLA", "KXHIGHSF", "KXHIGHHOU",
+            # "KXHIGHDEN", "KXHIGHDC", "KXHIGHDAL",
+            # "KXHIGHAUS", "KXHIGHPHIL",
             "CPI", "CPICORE", "CPICOREYOY",            # CPI / Inflation
             "KXNFLANYTD",                              # NFL Anytime Touchdown
-            "KXNHLSPREAD", "KXNHLFIRSTGOAL",           # NHL Spreads + First Goal
-            "KXNBA2D",                                 # NBA Double-Double
+            "KXNHLSPREAD",                             # NHL Spreads (OOS confirmed)
+            # "KXNHLFIRSTGOAL",                         # NHL First Goal — dropped: OOS decayed (62% YES vs 45% predicted)
+            # "KXNBA2D",                               # NBA Double-Double — dropped: -7% ROI after recalibration
             "KXNFLSPREAD",                             # NFL Spreads
         ]:
             cursor = None
@@ -909,20 +1054,51 @@ class EdgeRunner:
         # Sync positions from Kalshi
         await self._order_manager.sync_positions(self._cache)
 
-        # Record starting bankroll (caps max bet size for the session)
+        # Record starting bankroll and portfolio value
         self._starting_bankroll = self._cache.get_bankroll()
-        self._risk_gates = RiskGates(starting_bankroll=self._starting_bankroll)
-        console.print(
-            f"[blue]Starting bankroll locked at ${self._starting_bankroll} "
-            f"(max bet sized from this, not from profits).[/blue]"
+        starting_portfolio = self._cache.get_portfolio_value()
+
+        # Load persistent high-water mark (survives restarts)
+        # HWM tracks portfolio value (cash + positions), not just cash
+        from data.hwm_cache import load_hwm, save_hwm
+        from config.settings import RESET_HWM
+        persistent_hwm = load_hwm()
+        if RESET_HWM or persistent_hwm is None:
+            persistent_hwm = starting_portfolio
+            save_hwm(starting_portfolio)
+            console.print(f"[yellow]HWM reset to portfolio value ${starting_portfolio}[/yellow]")
+        else:
+            # If portfolio value exceeds stored HWM, update it
+            if starting_portfolio > persistent_hwm:
+                persistent_hwm = starting_portfolio
+                save_hwm(starting_portfolio)
+            console.print(f"[blue]Loaded persistent HWM: ${persistent_hwm} | Portfolio: ${starting_portfolio}[/blue]")
+
+        self._risk_gates = RiskGates(
+            starting_bankroll=self._starting_bankroll,
+            persistent_hwm=persistent_hwm,
         )
-        console.print("[blue]5-gate risk system initialized.[/blue]")
+        self._risk_gates.set_hwm_callback(save_hwm)
+        console.print(
+            f"[blue]Starting bankroll: ${self._starting_bankroll} | "
+            f"HWM: ${persistent_hwm} | 6-gate risk system initialized.[/blue]"
+        )
+
+        # Connect brier_tracker to risk_gates (now that risk_gates exists)
+        self._brier_tracker._risk_gates = self._risk_gates
+
+        # Initialize Bayesian state from priors if first run
+        from data.bayesian_cache import get_or_init_state
+        get_or_init_state()
 
         # Auto-discover NBA markets (replaces manual ticker config)
         await self._discover_nba_markets()
 
         # Send startup alert
-        await self._alerter.send_startup(TRADING_MODE, self._cache.get_bankroll())
+        await self._alerter.send_startup(
+            TRADING_MODE, self._cache.get_bankroll(),
+            portfolio_value=self._cache.get_portfolio_value(),
+        )
 
         console.print(
             f"[green]EdgeRunner: Ready. Mode={TRADING_MODE.upper()} "
@@ -979,20 +1155,11 @@ class EdgeRunner:
 
         # Send session summary to Discord
         try:
-            await self._alerter.send_daily_summary(
-                trades_executed=order_status["total_executions"],
-                wins=0,  # TODO: track wins/losses in order_manager
-                losses=0,
-                day_pnl=pnl,
-                bankroll=final_bankroll,
-                avg_clv=0.0,
-                avg_latency_ms=0,
-                api_cost=0.0,  # No LLM cost — rules-based
-            )
             await self._alerter.send_shutdown(
-                f"{reason} | P&L: ${pnl:+.2f} ({pnl_pct:+.1f}%) | "
-                f"{order_status['total_executions']} trades | "
-                f"${self._starting_bankroll} -> ${final_bankroll}"
+                reason=reason,
+                pnl=pnl,
+                bankroll=final_bankroll,
+                trades=order_status["total_executions"],
             )
         except Exception:
             pass
@@ -1032,7 +1199,25 @@ class EdgeRunner:
             ]
             if self._nba_poller:
                 tasks.append(self._nba_poller.run())
-            await asyncio.gather(*tasks, return_exceptions=True)
+            task_names = [
+                "feed", "market_poller", "smart_money", "signal_evaluator",
+                "position_monitor", "arb_scanner", "brier_tracker",
+                "watchdog", "auto_shutdown", "daily_recap",
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Check for silently crashed tasks
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    name = task_names[i] if i < len(task_names) else f"task_{i}"
+                    console.print(f"[red bold]TASK CRASHED: {name} — {type(result).__name__}: {result}[/red bold]")
+                    try:
+                        await self._alerter._send_embed(
+                            title="TASK CRASH",
+                            description=f"Task `{name}` crashed: {result}",
+                            color=0xFF0000,
+                        )
+                    except Exception:
+                        pass
         except asyncio.CancelledError:
             pass
         finally:
@@ -1049,17 +1234,27 @@ class EdgeRunner:
         await asyncio.sleep(600)
 
         while self._running:
-            # Re-discover markets every 2 hours to pick up new games
-            await asyncio.sleep(7200)
+            # Re-discover markets every hour to capture opening line value
+            # Gemini research: FLB is strongest when markets first open, before sharp money corrects
+            await asyncio.sleep(3600)
             try:
+                # Track tickers before re-discovery to identify NEW markets
+                old_tickers = set(self._cache.get_all_orderbooks().keys())
+
                 console.print("[blue]Re-discovering markets...[/blue]")
                 await self._discover_nba_markets()
+
                 # Clean up discovery prices for tickers no longer tracked
                 from data.discovery_cache import clear_old_prices, save_discovery_prices
                 self._discovery_prices = clear_old_prices(
                     self._discovery_prices, DEFAULT_TRACKED_TICKERS
                 )
                 save_discovery_prices(self._discovery_prices)
+
+                # Log new markets — market poller will fetch orderbooks on next cycle (~30s)
+                new_tickers = set(self._cache.get_all_orderbooks().keys()) - old_tickers
+                if new_tickers:
+                    console.print(f"[green]Opening Line Capture: {len(new_tickers)} new markets — poller will evaluate on next cycle[/green]")
             except Exception as e:
                 console.print(f"[red]Market re-discovery error: {e} (will retry in 2h)[/red]")
 
@@ -1116,21 +1311,53 @@ class EdgeRunner:
 
                     console.print(f"[bold cyan]{recap}[/bold cyan]")
 
-                    # Send to Discord (use _send_embed directly for proper formatting)
+                    # Get Bayesian update count for the day
                     try:
-                        pnl_color = 0x2ECC71 if daily_pnl >= 0 else 0xE74C3C  # green or red
-                        await self._alerter._send_embed(
-                            title=f"DAILY RECAP ({now_pdt.strftime('%A %B %d')})",
-                            description=recap,
-                            color=pnl_color,
+                        from data.bayesian_cache import load_bayesian_state
+                        bstate = load_bayesian_state()
+                        bayesian_updates = sum(v.get("updates", 0) for v in bstate.values()) if bstate else 0
+                    except Exception:
+                        bayesian_updates = 0
+
+                    # Send to Discord
+                    try:
+                        await self._alerter.send_daily_summary(
+                            trades_executed=self._daily_trades,
+                            wins=self._daily_wins,
+                            losses=self._daily_trades - self._daily_wins,
+                            day_pnl=daily_pnl,
+                            bankroll=current_bankroll,
+                            portfolio_value=self._cache.get_portfolio_value(),
+                            open_positions=positions,
+                            signals_generated=rules_stats["total_signals"],
+                            signals_evaluated=rules_stats["total_evaluated"],
+                            bayesian_updates=bayesian_updates,
                         )
+                    except Exception:
+                        pass
+
+                    # Apply daily Bayesian decay (old priors fade, recent data weighs more)
+                    try:
+                        from data.bayesian_cache import apply_daily_decay, load_bayesian_state, save_bayesian_state
+                        bstate = load_bayesian_state()
+                        if bstate:
+                            bstate = apply_daily_decay(bstate)
+                            save_bayesian_state(bstate)
+                            console.print(f"[blue]Bayesian: Applied daily decay to {len(bstate)} buckets[/blue]")
+                    except Exception:
+                        pass
+
+                    # Sync bankroll from Kalshi (catch overnight settlements)
+                    try:
+                        await self._order_manager.sync_bankroll(self._cache)
+                        await self._order_manager.sync_positions(self._cache)
                     except Exception:
                         pass
 
                     # Reset daily counters
                     self._daily_trades = 0
                     self._daily_wins = 0
-                    self._daily_start_bankroll = current_bankroll
+                    self._daily_start_bankroll = self._cache.get_bankroll()
                     self._rules._total_evaluated = 0
                     self._rules._total_signals = 0
 

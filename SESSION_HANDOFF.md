@@ -1,111 +1,132 @@
-# EdgeRunner Session Handoff — April 4-5, 2026
+# EdgeRunner Session Handoff — April 7, 2026
 
-## CURRENT STATE
+## Current State
+- **Agent running 24/7** on DigitalOcean VPS (159.65.177.244, $6/mo, NYC3)
+- **Balance:** ~$285 (started $310, lost ~$25 on UCL Bayern bug)
+- **Mode:** LIVE trading, DRY_RUN=false
+- **SSH:** `ssh -i ~/.ssh/digitalocean_edgerunner root@159.65.177.244`
+- **Logs:** `journalctl -u edgerunner -f`
+- **Restart:** `systemctl restart edgerunner`
 
-### What Was Just Built: EdgeRunner v2 (Rules-Based Engine)
-The agent was rebuilt from an LLM-based trader (Claude Haiku) to a **rules-based engine** that requires zero API calls. This was driven by data analysis showing the LLM approach had a 24% win rate.
+## CRITICAL: Do NOT restart the agent while games are in progress
+The Bayern Munich UCL bug ($25 loss) happened because 3 restarts during a live game each wiped/contaminated the discovery price cache. Each restart recorded the mid-game price as the "discovery" price, so the drift detection didn't trigger. Discovery prices now persist to disk (`data/discovery_prices.json`) but if the persisted price is already a mid-game price, the damage is done. **Wait until all games finish before restarting.**
 
-### The Proven Strategy
-**Buy NO on NBA game winners where YES is priced above 60 cents.**
-- Backtested on 738 settled game winner markets from real Kalshi data
-- +33% ROI over 177 qualifying trades
-- 33% win rate with 3:1 payout ratio (risk ~$0.25, win ~$0.73)
-- Max drawdown: 9.9%
-- After Kalshi fees: +22% ROI (61-75c bucket), +34% ROI (76-95c bucket)
+## 12 Active Sports (CPI dropped — market dead since Nov 2024)
 
-### What Needs to Happen Next
-1. **Run the backtest**: `python tests/backtest_v2.py` — starting $100, daily compounding
-2. **Analyze results** and decide if strategy is ready for live trading
-3. **If profitable**: run agent with `python main.py` during NBA games
+| Sport | Ticker Pattern | Kelly | Season | Edge Source |
+|---|---|---|---|---|
+| NBA | KXNBAGAME | 0.10 (conservative) | Oct-Jun | Favorite-longshot bias |
+| NHL | KXNHLGAME | 0.30 (aggressive) | Oct-Apr reg season only | Strongest bias |
+| EPL | KXEPLGAME | 0.25 | Aug-May | 71-85c bucket only |
+| UCL | KXUCLGAME | 0.12 | Sep-Jun | 66-70c + 76-85c |
+| La Liga | KXLALIGAGAME | 0.08 | Aug-May | 81-90c only |
+| WNBA | KXWNBAGAME | 0.12 | May-Oct | Skip 66-70c bucket |
+| UFC | KXUFCFIGHT | 0.12 | Year-round | 76-85c only |
+| NCAA Men's BB | KXNCAAMBGAME | 0.10 | Nov-Mar | 61-80c (dropped 81-90c) |
+| NCAA Women's BB | KXNCAAWBGAME | 0.12 | Nov-Mar | All buckets |
+| WTA Tennis | KXWTAMATCH | 0.08 | Jan-Nov | Conservative sizing |
+| Weather | KXHIGHNY/CHI/MIA/etc | 0.25 | Year-round | Highest ROI (+98%) |
+| NFL Anytime TD | KXNFLANYTD | 0.20 | Sep-Jan | 53% WR, +47% ROI |
 
-## KEY FILES
+## Key Parameters
+- **MAX_BET_DOLLARS:** $100 per trade (hard cap in execution/risk.py)
+- **MAX_DRAWDOWN_PCT:** 40% (circuit breaker, permanent halt per session)
+- **MAX_CONSECUTIVE_LOSSES:** 6 (then 10min cooldown)
+- **SLIPPAGE:** 0.5c (reduced from 1.5c which was blocking all NBA trades)
+- **MARKET_POLL_INTERVAL:** 30 seconds
+- **AUTO_PROFIT_TAKE:** 400%
+- **TRAILING_STOP:** 25% from peak (only for non-game-winner positions)
+- **NBA_POLLER:** Disabled (ENABLE_NBA_POLLER=false, was causing 401 errors)
 
-### Strategy & Analysis
-- `signals/rules.py` — **THE NEW BRAIN** — rules-based evaluator, replaces Claude
-- `docs/final_strategy_recommendation.md` — complete strategy with data
-- `docs/dataset_analysis_v4_findings.md` — 5 exploitable edges from 6.5M trades
-- `docs/pnl_analysis_apr4.md` — honest P&L showing 24% win rate with old LLM approach
-- `RESEARCH_FIRST.md` — mandate to research before coding
+## Trading Rules
+1. **Hold game winners to settlement** — no trailing stops, no early sells. Backtest validates hold-to-settlement only. Selling DEN early at 33c instead of $1.00 cost us $13 on night 1.
+2. **Pre-event only** — no mid-game bets. ESPN blocks NBA/NHL in-progress games. Price drift detection (>20% from discovery) blocks all other sports.
+3. **One trade per ticker** — duplicate position block in _execute_decision checks `existing_side == new_side`.
+4. **NHL playoff veto** — Apr 17 to Sep. Favorites win 80% in playoffs, edge disappears.
+5. **Sport-specific Kelly** — NHL gets 3x the position size of NBA because 45% win rate vs 34%.
 
-### Core Architecture
-- `main.py` — orchestrator, now uses RulesEvaluator instead of Claude
-- `execution/risk_gates.py` — 5-gate risk system (drawdown, edge, liquidity, concentration, positions)
-- `execution/decision_log.py` — logs ALL decisions to Supabase `decisions` table
-- `execution/brier_tracker.py` — tracks prediction accuracy per category
-- `execution/position_monitor.py` — trailing stops (quarter-aware for props via ESPN)
-- `execution/kalshi_client.py` — Kalshi REST API with RSA-PSS auth
-- `execution/order_manager.py` — order execution with fee-adjusted Kelly sizing
-- `execution/arbitrage.py` — scans for YES+NO < $1.00 arbitrage
+## Bug Fixes Applied This Session
+1. **Cache race condition** — WS was overwriting REST prices with None. Fixed: only update if value is not None.
+2. **Position sync** — Kalshi returns negative `position_fp` for NO positions. Fixed parsing.
+3. **Duplicate trades** — Agent re-bought same ticker on every poll. Fixed: check if already holding.
+4. **Depth gate blocking all trades** — MIN_DEPTH_CONTRACTS was 5, orderbook depth was 0. Set to 0 (disabled).
+5. **Slippage eating NBA edge** — 1.5c slippage made NBA edge negative after fees. Reduced to 0.5c.
+6. **Bankroll locked to starting** — max_bankroll capped bets at session start amount forever. Removed; MAX_BET_DOLLARS handles it.
+7. **Auto-shutdown** — Disabled for 24/7 mode. Market re-discovery every 2 hours instead.
+8. **Mid-game trading** — Added pre-event only rule + price drift detection for non-ESPN sports.
+9. **Discovery price persistence** — Saved to disk so restarts don't lose the baseline.
+10. **Consecutive loss halt** — Raised from 3 to 6 (3 triggers during normal 34% win rate variance).
+11. **WebSocket JSON parse** — Added try/catch so malformed messages don't crash the feed.
+12. **One-sided orderbook** — Skip instead of inferring extreme prices.
+13. **NBA game winners not reaching evaluator** — Cache had best_bid=None due to WS/REST race. Fixed cache protection.
+14. **Auto-profit-take too tight** — Raised from 200% to 400% to let winners run.
+15. **Market poll too slow** — Reduced from 60s to 30s.
 
-### Data Sources
-- `data/espn_scores.py` — live game scores, quarter, clock (FREE, no auth)
-- `data/espn_standings.py` — team records, standings (FREE, no auth)
-- `data/market_poller.py` — Kalshi orderbook polling via REST
-- `data/feeds.py` — Kalshi WebSocket (connected but demo had limited data)
-- `data/smart_money.py` — Polymarket top trader positions
-- `data/cache.py` — in-memory state with OFI calculation
-- `data/peak_cache.py` — persists trailing stop peak prices across restarts
+## Backtest Results ($300 start, $100 max bet, recent data only 2025+)
+- **$300 → $107,148 over 13 months**
+- 1,856 trades, 40.5% win rate
+- Max drawdown: 42.2%
+- Bankroll never dropped below $300
+- $100K milestone: January 2026 (month 13)
+- Best months: Dec (+$27K), Oct (+$19K), Nov (+$16K)
+- Only losing month: April (-$413)
+- Weather carries Jan-Mar, NFL TD dominates Sep-Oct, NHL peaks Nov-Dec
 
-### Dataset (36GB Jon-Becker)
-- Location: `data/dataset/data/data/kalshi/` (Parquet files)
-- 7.68M total markets, 6.5M NBA trades
-- Dec 2024 — Nov 2025
-- Queryable with DuckDB: `pip install duckdb`
-- Analysis scripts: `tests/deep_analysis.py`
+## Night 1 Results (April 6)
+- 7 unique markets traded
+- DEN NO: Won (Portland upset). With bugs: sold early at 33c for $0.58. Without bugs: would have been +$13.80 held to settlement.
+- CLE NO: Won (Memphis upset). Similar — early sell destroyed profit.
+- Actual P&L distorted by duplicate bug + early sells
+- Without bugs: ~+$42 profit on $24 wagered (43% win rate, 3W/4L)
+- Led to hold-to-settlement fix and duplicate block fix
 
-## CRITICAL FINDINGS FROM DATA
+## Night 2 Results (April 7)
+- UCL Bayern: Lost $25 across 4 duplicate trades caused by 3 mid-session restarts
+- NBA + NHL: Multiple pre-game trades placed legitimately, awaiting settlement
+- Led to discovery price persistence fix
 
-### From 6.5M NBA Trades:
-1. **Makers win 68.5%** when retail takers buy YES on NBA
-2. **Game winner NO on favorites (61-99c YES)**: +22-40% ROI after fees
-3. **Low volume markets (<1K)**: 73% taker win rate
-4. **Price momentum**: 58.8% win rate when buying after price drops
-5. **Player prop spreads are 55c wide** — unprofitable for takers
-6. **Off-hours trading**: 61% win rate at 6 UTC vs 40% at peak hours
+## VPS Details
+- **Provider:** DigitalOcean
+- **Plan:** $6/mo, 1 vCPU, 1GB RAM, NYC3
+- **IP:** 159.65.177.244
+- **SSH Key:** C:\Users\dcho0\.ssh\digitalocean_edgerunner
+- **Service:** systemd `edgerunner.service` runs `python -u runner.py --now`
+- **Auto-restart:** On crash (systemd RestartSec=30) + on session end (runner.py)
 
-### From Our Live Trading (2 sessions):
-- LLM agent: 24% win rate, lost ~$10
-- Game winners: 0/4 (Claude's predictions were wrong every time)
-- Player props: 2/8 (25% win rate)
-- Night 1 NOP-SAC trade WAS profitable ($30→$50) but partially lucky
-- Most losses from: bugs (restart wiping peaks), dead market trades, Claude hallucinations
+## GitHub
+- **Repo:** github.com/d-anielcode/edgerunner
+- **Branch:** main
+- **Latest commit:** `bea5172` — Persist discovery prices to disk
 
-## BUGS FIXED (Critical for Future Sessions)
-1. Peak prices persist to disk (`data/peak_prices.json`) — survives restarts
-2. No trades when game < 2 min left in Q4 (ESPN clock check)
-3. No opposite-side trades on same ticker (prevents Kalshi auto-netting)
-4. No trades without player data (rationale scanner blocks)
-5. Quarter-aware trailing stops for props (Q1=wide, Q4=tight)
-6. Resting orders cancel after 30 seconds
-7. 2-phase market poller (cache all, then push to queue)
-8. Fee-adjusted edge calculation in risk gates
-9. OT handling (don't block trades just because Q4 ended)
+## Dataset
+- **TrevorJS/kalshi-trades** on HuggingFace: 154M trades, Jun 2021 - Jan 2026
+- Downloaded to `data/trevorjs/` locally (not on VPS, not needed for live trading)
+- All edge tables calibrated from this dataset
 
-## CONFIGURATION (.env)
-```
-TRADING_MODE=live
-FRACTIONAL_KELLY=0.35
-MAX_POSITION_PCT=0.15
-MAX_CONCURRENT_POSITIONS=10
-MIN_EDGE_THRESHOLD=0.10
-MAX_SPREAD_CENTS=0.03
-```
+## File Structure (Key Files)
+- `signals/rules.py` — THE BRAIN: 12 edge tables, 12 sport params, all trading logic
+- `execution/risk.py` — Kelly sizing + $100 max bet cap
+- `execution/risk_gates.py` — 5-gate risk system (drawdown, edge, liquidity, concentration, position limit)
+- `execution/position_monitor.py` — Hold-to-settlement for game winners, trailing stops for props
+- `execution/order_manager.py` — Trade execution, position sync from Kalshi, DRY_RUN support
+- `config/markets.py` — 23 ticker patterns, sport identification, GAME_WINNER_PATTERNS
+- `config/settings.py` — All env vars: MAX_BET_DOLLARS, ENABLE_NBA_POLLER, DRY_RUN, etc.
+- `data/discovery_cache.py` — Persists discovery prices for mid-game detection
+- `data/espn_scores.py` — NBA + NHL live scores (no soccer/tennis/UFC feeds)
+- `data/cache.py` — In-memory state, protected against None overwrites
+- `main.py` — Orchestrator: market discovery, signal evaluation, 2h re-discovery loop
+- `runner.py` — 24/7 wrapper with ESPN schedule checking and auto-restart
+- `deploy/setup.sh` — VPS setup script (systemd service creation)
 
-## ACCOUNTS
-- Kalshi: Production keys in `.env`, RSA key at `keys/prod_private_key.pem`
-- Supabase: EdgeRunner project (tables: markets, trades, positions, daily_pnl, brier_scores, decisions)
-- Discord: Webhook configured for trade alerts
-- Anthropic: API key in `.env` (but v2 doesn't use Claude for trading)
+## Known Limitations
+1. **ESPN only covers NBA + NHL** — UCL/EPL/WTA/UFC/WNBA/Weather use price drift detection instead (20% threshold)
+2. **Discovery price contamination on restart** — If restarted during live games, mid-game price becomes the baseline. NEVER restart during games.
+3. **Backtest assumes hold-to-settlement** — No intra-game price data in dataset. Live agent matches this now.
+4. **$100 bet cap limits compounding** — Growth becomes linear above ~$1K bankroll. Intentional for risk control.
+5. **February-March are thin months** — Only weather trades. Expect slow growth.
 
-## WHAT PRIZM CAN PROVIDE (Separate Project)
-- Path: `C:/Users/dcho0/nbaiqproject`
-- Supabase with 18.5K player game logs, season stats, team defense stats
-- Confidence model v6.2 with 11 weighted factors
-- Different Supabase URL: `https://shvoyqofsbtnzwokuutt.supabase.co`
-- NOT yet integrated into EdgeRunner
-
-## FUTURE PLANS
-1. Weather markets (year-round, Open-Meteo ensemble API)
-2. MLB (April-October, reuses NBA architecture)
-3. Crypto hourly (24/7, macro news only)
-4. Prizm data integration (real NBA stats from own Supabase)
+## User Goals
+- **Target:** $100K by end of 2026
+- **Starting capital:** ~$314 (deposited $200 on top of $114)
+- **Strategy:** Let it run 24/7 autonomously, monitor via Discord alerts
+- **Risk tolerance:** Moderate — chose $100 max bet over more aggressive options

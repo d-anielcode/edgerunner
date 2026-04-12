@@ -42,7 +42,9 @@ POSITION_CHECK_INTERVAL: float = 60.0
 INITIAL_STOP_LOSS_PCT: float = 0.50  # Sell if position drops 50% from entry
 
 # Trailing stop-loss (from peak price)
-TRAILING_STOP_PCT: float = 0.25  # Sell if price drops 25% from its peak
+# DISABLED: Backtest showed 25% trailing stop destroys 72% of edge on game winners.
+# Games are too volatile — price swings through stop before reverting.
+TRAILING_STOP_PCT: float = 999.0  # Effectively disabled (was 0.25)
 
 # Breakeven lock: once position is up this much, floor moves to entry price
 BREAKEVEN_LOCK_PCT: float = 0.50  # Up 50% → never let it become a loss
@@ -50,8 +52,38 @@ BREAKEVEN_LOCK_PCT: float = 0.50  # Up 50% → never let it become a loss
 # Bankroll-based stop
 BANKROLL_LOSS_THRESHOLD: float = 0.02  # 2% of bankroll loss triggers review
 
-# Auto profit-take (no Claude needed)
-AUTO_PROFIT_TAKE_PCT: float = 4.00  # 400% gain → auto-sell, lock it in (let winners run)
+# Sport-specific profit-take thresholds (from primary backtest optimization grid)
+# Each sport has its own optimal PT% based on trajectory analysis of 6,636 markets
+SPORT_PROFIT_TAKE = {
+    "EPL": 1.00,       # 100% — triggers 90% of the time, locks in gains early
+    "NBA": 1.50,       # 150% — moderate, higher edge on bigger swings
+    "NBASPREAD": 1.50, # 150%
+    "NCAAMB": 1.00,    # 100% — high variance, take profits fast
+    "NFLSPREAD": 2.00, # 200% — keep current
+    "NFLTD": 1.00,     # 100%
+    "NHL": 1.00,       # 100% — games resolve correctly, take early
+    "NHLSPREAD": 3.00, # 300% — rare but massive when it hits
+    "UCL": 1.00,       # 100%
+    "UFC": 2.00,       # 200% — keep current
+    "WNBA": 1.00,      # 100%
+    "ATP": 1.00,       # 100% — default for new sports
+    "CFB": 2.00,       # 200% — default until validated
+    "WTA": 1.50,       # 150% — RE-ENABLED: best Sharpe at 76-90c with 150% PT
+    "MLB": 0.50,       # 50% — take profits fast, weak FLB only viable with quick exits
+    "LALIGA": 2.00,    # 200% — optimization confirmed current 200% is optimal
+    "MLBTOTAL": 1.00,  # 100% — best new market, 82% WR
+    "NFLGW": 1.00,     # 100% — NFL game winners
+    "NFLTT": 1.50,     # 150% — NFL team totals
+    "CBA": 1.00,       # 100% — Chinese basketball
+    "LIGUE1": 1.00,    # 100% — French soccer
+    "LOL": 1.00,       # 100% — League of Legends esports
+    "ATPCH": 0.50,     # 50% — ATP Challenger, take profits fast
+}
+AUTO_PROFIT_TAKE_PCT: float = 1.50  # Fallback for sports not in SPORT_PROFIT_TAKE
+
+# Tail-risk stop: sell dying positions at $0.05-0.10 to exploit retail FLB on lottery tickets
+# Retail overpays for longshots — selling a 2% chance at $0.08 is positive EV
+TAIL_RISK_FLOOR: Decimal = Decimal("0.08")
 
 # Quarter-aware trailing stops for player props
 # [Q1, Q2, Q3, Q4] — how much decline to allow from peak before selling
@@ -276,6 +308,29 @@ class PositionMonitor:
             if current_price is not None:
                 unrealized = (current_price - position.avg_price) * position.quantity
                 pnl_pct = float((current_price - position.avg_price) / position.avg_price) if position.avg_price > 0 else 0.0
+
+                # Sport-specific profit-take (from optimization grid backtest)
+                pt_threshold = SPORT_PROFIT_TAKE.get(pos_sport, AUTO_PROFIT_TAKE_PCT)
+                if pnl_pct >= pt_threshold:
+                    console.print(
+                        f"[green]GW PROFIT TAKE: {position.kalshi_ticker[:35]} up {pnl_pct:+.0%}! "
+                        f"({pos_sport} threshold: {pt_threshold:.0%}) "
+                        f"Selling to lock in ${unrealized:+.2f}.[/green]"
+                    )
+                    return {
+                        "action": "sell",
+                        "current_price": current_price,
+                        "unrealized_pnl": unrealized,
+                        "pnl_pct": pnl_pct,
+                        "reason": f"GW profit-take: up {pnl_pct:+.0%} (${unrealized:+.2f}).",
+                    }
+
+                # Tail-risk stop: DISABLED for game winners.
+                # The Gemini research and our data both show that hold-to-settlement
+                # beats stop-losses on game winners. The tail-risk exit was selling
+                # positions within minutes of entry (before the game could play out).
+                # Game winners should either hit the 200% profit-take or settle at $0/$1.
+
             return {
                 "action": "hold",
                 "current_price": current_price,
@@ -437,18 +492,25 @@ class PositionMonitor:
             from data.peak_cache import save_peak_prices
             save_peak_prices(self._peak_prices)
 
-            # Send Discord alert
+            # Update bankroll with sale proceeds (prevents desync until next Kalshi sync)
+            proceeds = current_price * position.quantity
+            new_bankroll = self._cache.get_bankroll() + proceeds
+            self._cache.set_bankroll(new_bankroll)
+            console.print(f"[blue]Bankroll updated after exit: +${proceeds:.2f} -> ${new_bankroll:.2f}[/blue]")
+
+            # Send Discord exit alert
             try:
                 pnl = (current_price - position.avg_price) * position.quantity
-                color_word = "PROFIT" if pnl >= 0 else "LOSS"
-                await self._alerter.send_trade_alert(
+                pnl_pct = float((current_price - position.avg_price) / position.avg_price * 100) if position.avg_price > 0 else 0
+                await self._alerter.send_exit_alert(
                     ticker=position.kalshi_ticker,
-                    side=f"SELL {position.side}",
-                    price=current_price,
-                    bet_amount=abs(pnl),
-                    bankroll_pct=0.0,
-                    rationale=f"{color_word}: {reason}",
-                    bankroll=self._cache.get_bankroll() + (current_price * position.quantity),
+                    side=position.side,
+                    entry_price=position.avg_price,
+                    exit_price=current_price,
+                    pnl=pnl,
+                    pnl_pct=pnl_pct,
+                    reason=reason,
+                    bankroll=new_bankroll,
                 )
             except Exception:
                 pass
@@ -494,7 +556,8 @@ class PositionMonitor:
         Unfilled orders tie up capital and clutter the portfolio.
         If the price moved away from our limit, the edge is gone anyway.
         """
-        max_resting_seconds = 30  # 30 seconds — stale orders get picked off by informed flow
+        from config.settings import RESTING_ORDER_TIMEOUT_SECONDS
+        max_resting_seconds = RESTING_ORDER_TIMEOUT_SECONDS  # 300s default — Maker orders need time to fill
 
         try:
             orders = await self._kalshi.get_orders(status="resting")
@@ -554,9 +617,9 @@ class PositionMonitor:
             return
 
         current_positions = self._cache.get_positions()
-        min_wait = 180.0  # 3 minutes since exit (longer than before)
-        reentry_discount = 0.30  # Price must be 30% below previous entry
-        max_reentries = 1  # Only re-enter once per ticker per session
+        min_wait = 180.0  # 3 minutes since exit (avoid whipsaw)
+        reentry_discount = 0.10  # Price must be 10% below previous entry (was 30% — too restrictive for PT re-entries)
+        max_reentries = 2  # Allow up to 2 re-entries per ticker (capture multiple swings)
 
         expired = []
         for ticker, exit_info in self._exited_positions.items():
@@ -590,7 +653,7 @@ class PositionMonitor:
                 console.print(
                     f"[yellow]RE-ENTRY FLAG: {ticker} | "
                     f"Prev entry=${prev_entry}, now ${current_price} "
-                    f"({discount:.0%} cheaper). Sending to Claude for evaluation.[/yellow]"
+                    f"({discount:.0%} cheaper). Re-evaluating via rules engine.[/yellow]"
                 )
                 # Mark that we've flagged this re-entry
                 exit_info["reentry_count"] = exit_info.get("reentry_count", 0) + 1

@@ -281,8 +281,20 @@ class AgentCache:
         self._bankroll = amount
 
     def get_bankroll(self) -> Decimal:
-        """Get the current bankroll amount."""
+        """Get the current cash bankroll (excluding capital in positions)."""
         return self._bankroll
+
+    def get_portfolio_value(self) -> Decimal:
+        """Get total portfolio value: cash + capital deployed in open positions.
+
+        This is the true account value. Use for drawdown calculations
+        instead of cash-only bankroll, since capital in positions isn't lost.
+        """
+        deployed = sum(
+            pos.avg_price * pos.quantity
+            for pos in self._positions.values()
+        )
+        return self._bankroll + deployed
 
     # --- Positions ---
 

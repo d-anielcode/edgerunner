@@ -115,11 +115,29 @@ MAX_CONCURRENT_POSITIONS: int = int(os.getenv("MAX_CONCURRENT_POSITIONS", "25"))
 MIN_EDGE_THRESHOLD: float = float(os.getenv("MIN_EDGE_THRESHOLD", "0.05"))
 """Minimum edge (|true_prob - market_prob|) required to trade (default: 5%)."""
 
-MAX_SPREAD_CENTS: float = float(os.getenv("MAX_SPREAD_CENTS", "0.03"))
+MAX_SPREAD_CENTS: float = float(os.getenv("MAX_SPREAD_CENTS", "0.05"))
 """Maximum bid-ask spread in dollars to accept a trade (default: $0.03)."""
 
 MAX_BET_DOLLARS: float = float(os.getenv("MAX_BET_DOLLARS", "200.0"))
 """Maximum dollar amount per trade (default: $200). Limits compounding risk."""
+
+MIN_BANKROLL_FLOOR: float = float(os.getenv("MIN_BANKROLL_FLOOR", "0.00"))
+"""Minimum bankroll to trade. Set to 0 to disable (trade at any bankroll size)."""
+
+KALSHI_MAKER_FEE_RATE: float = 0.0175
+"""Kalshi Maker fee coefficient: 0.0175 * P * (1-P). 75% less than Taker."""
+
+KALSHI_TAKER_FEE_RATE: float = 0.07
+"""Kalshi Taker fee coefficient: 0.07 * P * (1-P)."""
+
+MAKER_OFFSET_CENTS: int = int(os.getenv("MAKER_OFFSET_CENTS", "0"))
+"""Post limit orders this many cents inside the spread. 0 = Taker (cross spread for instant fill)."""
+
+RESTING_ORDER_TIMEOUT_SECONDS: float = float(os.getenv("RESTING_ORDER_TIMEOUT_SECONDS", "30.0"))
+"""Seconds before unfilled resting orders are canceled (default: 30s)."""
+
+RESET_HWM: bool = os.getenv("RESET_HWM", "").lower() in ("true", "1", "yes")
+"""Set to true on first deploy to reset the persistent high-water mark to current balance."""
 
 # =============================================================================
 # DATA FEEDS
