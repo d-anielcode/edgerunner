@@ -31,12 +31,7 @@ from config.settings import (
 console = Console()
 
 # Gate 0: Bankroll floor (below this, Kelly on discrete contracts breaks down)
-# Gate 1: Drawdown — tiered response from persistent high-water mark
-DRAWDOWN_TIER_1_PCT: float = 0.15  # 15% DD → 50% Kelly
-DRAWDOWN_TIER_2_PCT: float = 0.25  # 25% DD → 25% Kelly
-DRAWDOWN_TIER_3_PCT: float = 0.40  # 40% DD → full halt
-DRAWDOWN_TIER_1_KELLY: float = 0.50
-DRAWDOWN_TIER_2_KELLY: float = 0.25
+# Gate 1: Consecutive loss cooldown (tiered HWM drawdown handled by UnitizedRiskManager)
 MAX_CONSECUTIVE_LOSSES: int = 6  # At 34% NBA win rate, 3-4 loss streaks are normal
 LOSS_COOLDOWN_SECONDS: float = 600.0  # 10 min pause after 6 consecutive losses
 
@@ -47,7 +42,7 @@ MIN_VOLUME_24H: int = 50
 MIN_DEPTH_CONTRACTS: int = 0
 
 # Gate 4: Concentration
-MAX_PER_GAME: int = 3
+MAX_PER_GAME: int = 2
 MAX_TOTAL_EXPOSURE_PCT: float = 0.60
 
 
@@ -95,19 +90,12 @@ class RiskGates:
             log_rejection(result)
     """
 
-    def __init__(self, starting_bankroll: Decimal, persistent_hwm: Decimal | None = None) -> None:
+    def __init__(self, starting_bankroll: Decimal) -> None:
         self._starting_bankroll = starting_bankroll
-        # Use persistent HWM if provided (survives restarts), else session start
-        self._high_water_mark = persistent_hwm if persistent_hwm is not None else starting_bankroll
         self._consecutive_losses: int = 0
         self._last_loss_time: float = 0.0
         self._halted: bool = False
         self._halt_reason: str = ""
-        self._hwm_callback = None  # Set by main.py to persist HWM changes
-
-    def set_hwm_callback(self, callback):
-        """Set callback to persist HWM changes to disk."""
-        self._hwm_callback = callback
 
     # --- Gate 0: Bankroll Floor ---
 
@@ -124,15 +112,7 @@ class RiskGates:
     # --- Gate 1: Drawdown Circuit Breaker (tiered) ---
 
     def update_after_trade(self, pnl: Decimal, current_bankroll: Decimal) -> None:
-        """
-        Update state after a trade resolves.
-        Call this when a position closes (win or loss).
-        """
-        if current_bankroll > self._high_water_mark:
-            self._high_water_mark = current_bankroll
-            if self._hwm_callback:
-                self._hwm_callback(current_bankroll)
-
+        """Update consecutive loss tracking after a trade resolves."""
         if pnl < 0:
             self._consecutive_losses += 1
             self._last_loss_time = time.monotonic()
@@ -141,38 +121,13 @@ class RiskGates:
 
     def _check_drawdown(self, current_bankroll: Decimal) -> tuple[GateResult, float]:
         """
-        Gate 1: Tiered drawdown from persistent high-water mark.
-        Returns (GateResult, kelly_multiplier).
+        Gate 1: Consecutive loss cooldown.
+        Tiered HWM drawdown is now handled externally by UnitizedRiskManager.
         """
         if self._halted:
             return GateResult("DRAWDOWN", False, f"HALTED: {self._halt_reason}"), 0.0
 
         kelly_mult = 1.0
-
-        # Check drawdown from high-water mark (persistent across restarts)
-        if self._high_water_mark > 0:
-            drawdown = float(
-                (self._high_water_mark - current_bankroll) / self._high_water_mark
-            )
-
-            if drawdown >= DRAWDOWN_TIER_3_PCT:
-                self._halted = True
-                self._halt_reason = (
-                    f"Drawdown {drawdown:.1%} >= {DRAWDOWN_TIER_3_PCT:.0%} from HWM. "
-                    f"HWM=${self._high_water_mark}, now ${current_bankroll}."
-                )
-                console.print(f"[red bold]CIRCUIT BREAKER: {self._halt_reason}[/red bold]")
-                return GateResult("DRAWDOWN", False, self._halt_reason), 0.0
-            elif drawdown >= DRAWDOWN_TIER_2_PCT:
-                kelly_mult = DRAWDOWN_TIER_2_KELLY
-                console.print(
-                    f"[yellow]DD TIER 2: {drawdown:.1%} from HWM — Kelly reduced to {kelly_mult:.0%}[/yellow]"
-                )
-            elif drawdown >= DRAWDOWN_TIER_1_PCT:
-                kelly_mult = DRAWDOWN_TIER_1_KELLY
-                console.print(
-                    f"[yellow]DD TIER 1: {drawdown:.1%} from HWM — Kelly reduced to {kelly_mult:.0%}[/yellow]"
-                )
 
         # Check consecutive losses
         if self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
@@ -184,10 +139,9 @@ class RiskGates:
                     f"{self._consecutive_losses} consecutive losses. "
                     f"Cooling down for {remaining:.0f}s more."
                 ), 0.0
-            # Cooldown expired, reset
             self._consecutive_losses = 0
 
-        return GateResult("DRAWDOWN", True, f"OK (DD from HWM, kelly_mult={kelly_mult:.2f})"), kelly_mult
+        return GateResult("DRAWDOWN", True, "Consecutive loss check passed"), kelly_mult
 
     # --- Gate 2: Fee-Adjusted Edge ---
 
@@ -385,7 +339,6 @@ class RiskGates:
         """Return current risk state for monitoring."""
         return {
             "starting_bankroll": float(self._starting_bankroll),
-            "high_water_mark": float(self._high_water_mark),
             "consecutive_losses": self._consecutive_losses,
             "halted": self._halted,
             "halt_reason": self._halt_reason,
@@ -434,8 +387,8 @@ if __name__ == "__main__":
     console.print(f"  {result.summary()}")
     assert not result.passed
 
-    # Test 4: Drawdown circuit breaker
-    console.print("\n[cyan]4. Drawdown > 20%:[/cyan]")
+    # Test 4: Drawdown gate passes (HWM logic removed — handled by UnitizedRiskManager)
+    console.print("\n[cyan]4. Bankroll down 25% — drawdown gate now passes (HWM handled externally):[/cyan]")
     result = gates.check_all(
         edge=0.15, exec_price=Decimal("0.45"),
         spread=Decimal("0.02"), volume_24h=1500, depth=20,
@@ -443,7 +396,7 @@ if __name__ == "__main__":
         new_bet_amount=Decimal("3.00"), current_positions=0,
     )
     console.print(f"  {result.summary()}")
-    assert not result.passed
+    assert result.passed
 
     # Test 5: Too many positions on same game
     console.print("\n[cyan]5. Concentration (3 positions on same game):[/cyan]")

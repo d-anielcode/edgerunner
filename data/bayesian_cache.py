@@ -34,6 +34,11 @@ EVENT_DECAY = 0.995
 # Minimum alpha+beta to prevent the posterior from becoming unstable
 MIN_OBSERVATIONS = 10.0
 
+# Maximum effective pseudo-observations per bucket.
+# Prevents 2025 historical data from dominating posteriors.
+# With cap=20, live data shifts the mean within 5-10 events.
+PRIOR_CAP_MAX = 20.0
+
 
 def _bucket_key(sport: str, yes_price_cents: int) -> str:
     """Map sport + YES price to a 5c bucket key like 'NBA_60_64'."""
@@ -124,6 +129,20 @@ def get_or_init_state() -> dict:
     return state
 
 
+def _cap_prior(alpha: float, beta: float) -> tuple[float, float]:
+    """
+    Enforce hard cap on concentration parameter (alpha + beta).
+    Prevents asymptotic lock-in from massive historical priors.
+    Preserves the posterior mean while limiting effective sample size.
+    """
+    kappa = alpha + beta
+    if kappa > PRIOR_CAP_MAX:
+        mu = alpha / kappa
+        alpha = max(mu * PRIOR_CAP_MAX, 1.0)   # Floor at 1.0 prevents bathtub distribution
+        beta = max((1.0 - mu) * PRIOR_CAP_MAX, 1.0)
+    return alpha, beta
+
+
 def update_outcome(sport: str, yes_price_cents: int, result: str) -> None:
     """
     Update Bayesian posterior after a game settles.
@@ -155,6 +174,11 @@ def update_outcome(sport: str, yes_price_cents: int, result: str) -> None:
         return
 
     state[key]["updates"] = state[key].get("updates", 0) + 1
+
+    # Apply prior strength capping to prevent historical data lock-in
+    state[key]["alpha"], state[key]["beta"] = _cap_prior(
+        state[key]["alpha"], state[key]["beta"]
+    )
 
     old_rate = (state[key]["alpha"] - (1 if result == "yes" else 0)) / (
         state[key]["alpha"] + state[key]["beta"] - 1
