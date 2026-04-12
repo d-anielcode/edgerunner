@@ -42,9 +42,9 @@ POSITION_CHECK_INTERVAL: float = 60.0
 INITIAL_STOP_LOSS_PCT: float = 0.50  # Sell if position drops 50% from entry
 
 # Trailing stop-loss (from peak price)
-# DISABLED: Backtest showed 25% trailing stop destroys 72% of edge on game winners.
+# TRAILING STOP: REMOVED (was 0.25, then disabled at 999.0)
+# Backtest showed 25% trailing stop destroys 72% of edge on game winners.
 # Games are too volatile — price swings through stop before reverting.
-TRAILING_STOP_PCT: float = 999.0  # Effectively disabled (was 0.25)
 
 # Breakeven lock: once position is up this much, floor moves to entry price
 BREAKEVEN_LOCK_PCT: float = 0.50  # Up 50% → never let it become a loss
@@ -392,23 +392,10 @@ class PositionMonitor:
                 "reason": f"Auto profit-take: up {pnl_pct:+.0%} (${unrealized_pnl:+.2f}).",
             }
 
-        # === RULE 2: TRAILING STOP from peak ===
-        # Only active once position has been profitable
-        if peak_price > entry_price and drop_from_peak >= TRAILING_STOP_PCT:
-            # Calculate how much profit we're locking in
-            locked_pnl = (current_price - entry_price) * quantity
-            console.print(
-                f"[yellow]TRAILING STOP: {ticker} dropped {drop_from_peak:.0%} from "
-                f"peak ${peak_price}. Selling at ${current_price} to lock in "
-                f"${locked_pnl:+.2f}.[/yellow]"
-            )
-            return {
-                "action": "sell",
-                "current_price": current_price,
-                "unrealized_pnl": unrealized_pnl,
-                "pnl_pct": pnl_pct,
-                "reason": f"Trailing stop: {drop_from_peak:.0%} drop from peak ${peak_price}. Locking in ${locked_pnl:+.2f}.",
-            }
+        # RULE 2 (TRAILING STOP): REMOVED
+        # Backtest showed 25% trailing stop destroyed 72% of edge on game winners.
+        # Games are too volatile — price swings through stop before reverting.
+        # Was effectively disabled (TRAILING_STOP_PCT=999.0). Now fully removed.
 
         # === RULE 3: BREAKEVEN LOCK ===
         # Once position was up 50%+, never let it become a loss
@@ -724,7 +711,7 @@ class PositionMonitor:
         self._running = True
         console.print(
             f"[blue]Position Monitor: Started (interval={POSITION_CHECK_INTERVAL}s, "
-            f"initial-stop={INITIAL_STOP_LOSS_PCT:.0%} / trailing={TRAILING_STOP_PCT:.0%} / "
+            f"initial-stop={INITIAL_STOP_LOSS_PCT:.0%} / trailing=REMOVED / "
             f"{BANKROLL_LOSS_THRESHOLD:.0%} bankroll).[/blue]"
         )
 
