@@ -143,16 +143,18 @@ EDGE_TABLES = {
     "UFC": EDGE_TABLE_UFC,
     "NCAAMB": EDGE_TABLE_NCAAMB,
     "NCAAWB": EDGE_TABLE_NCAAWB,
-    "WTA": EDGE_TABLE_WTA,
+    # DISABLED: -10% ROI
+    # "WTA": EDGE_TABLE_WTA,
     "MLB": EDGE_TABLE_MLB,
     # New markets from risk-adjusted optimization (all STRONG ADD)
-    "MLBTOTAL": {(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},  # Over/under runs, 82% WR w/ 100% PT
+    # DISABLED: No backtest validation or OOS data for these markets.
+    # "MLBTOTAL": {(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},  # Over/under runs, 82% WR w/ 100% PT
     "NFLGW":    {(55, 65): 0.520, (66, 75): 0.580, (76, 90): 0.650},  # NFL game winners, 66% WR w/ 100% PT
     "NFLTT":    {(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},  # NFL team totals, 60% WR w/ 150% PT
-    "CBA":      {(55, 65): 0.500, (66, 75): 0.550, (76, 85): 0.620},  # Chinese basketball, 63% WR w/ 100% PT
-    "LIGUE1":   {(55, 65): 0.480, (66, 75): 0.500, (76, 85): 0.550},  # French soccer, 62% WR w/ 100% PT
-    "LOL":      {(55, 65): 0.500, (66, 75): 0.520, (76, 85): 0.550},  # League of Legends, 67% WR w/ 100% PT
-    "ATPCH":    {(55, 65): 0.520, (66, 75): 0.550, (76, 85): 0.620},  # ATP Challenger tennis, 73% WR w/ 50% PT
+    # "CBA":      {(55, 65): 0.500, (66, 75): 0.550, (76, 85): 0.620},  # Chinese basketball, 63% WR w/ 100% PT
+    # "LIGUE1":   {(55, 65): 0.480, (66, 75): 0.500, (76, 85): 0.550},  # French soccer, 62% WR w/ 100% PT
+    # "LOL":      {(55, 65): 0.500, (66, 75): 0.520, (76, 85): 0.550},  # League of Legends, 67% WR w/ 100% PT
+    # "ATPCH":    {(55, 65): 0.520, (66, 75): 0.550, (76, 85): 0.620},  # ATP Challenger tennis, 73% WR w/ 50% PT
     "ATP": EDGE_TABLE_ATP,
     # College Football: Not validated yet (season Sep-Jan). Conservative initial params.
     # Gemini research confirms strong FLB especially at 90c+ favorites.
@@ -197,16 +199,16 @@ SPORT_PARAMS = {
     "WNBA":   {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.08},
     "UFC":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},
     "NCAAWB": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},
-    "WTA":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # RE-ENABLED: 150% PT at 76-90c, Sharpe 0.183
+    # "WTA":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: -10% ROI in research; RE-ENABLED comment was wrong
     "MLB":    {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # 50% PT at 76-84c. Conservative.
     # --- NEW: Risk-adjusted optimization (all STRONG ADD, Sharpe > 0.2, MaxDD < $4) ---
-    "MLBTOTAL":{"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # Best market found: 0.815 Sharpe, $1.7 DD, 108% ROI
+    # "MLBTOTAL":{"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # DISABLED: No FLB research for over/under totals
     "NFLGW":   {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # NFL game winners, 0.244 Sharpe, $4.0 DD
     "NFLTT":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # NFL team totals, 0.270 Sharpe, $2.9 DD
-    "CBA":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # Chinese basketball, 0.291 Sharpe, $1.4 DD
-    "LIGUE1":  {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # Ligue 1, 0.247 Sharpe, $2.5 DD
-    "LOL":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # LoL esports, 0.356 Sharpe, $2.8 DD
-    "ATPCH":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # ATP Challenger, 0.219 Sharpe, $2.1 DD
+    # "CBA":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # DISABLED: Chinese basketball, no backtest validation
+    # "LIGUE1":  {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: French soccer, no OOS data
+    # "LOL":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # DISABLED: LoL esports, no validation
+    # "ATPCH":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: ATP Challenger, no validation
     "ATP":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # Year-round, strong FLB + 2.5% retirement premium
     "CFB":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.12},  # Not OOS validated — very conservative until Sep data
     "CPI":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
@@ -306,9 +308,9 @@ class RulesEvaluator:
 
         # Rule 3: YES must be above threshold
         # Many markets have edge starting at 55c (totals, esports, challenger tennis)
-        LOW_EDGE_SPORTS = ("WEATHER", "CPI", "NFLTD", "MLBTOTAL", "NFLGW", "NFLTT", "CBA", "LIGUE1", "LOL", "ATPCH")
+        LOW_EDGE_SPORTS = ("WEATHER", "CPI", "NFLTD", "NFLGW", "NFLTT")
         min_price = Decimal("0.55") if sport in LOW_EDGE_SPORTS else MIN_YES_PRICE
-        max_price = Decimal("0.95") if sport in LOW_EDGE_SPORTS else MAX_YES_PRICE
+        max_price = Decimal("0.90") if sport in LOW_EDGE_SPORTS else MAX_YES_PRICE
 
         if yes_price < min_price:
             return pass_decision(
@@ -461,16 +463,15 @@ class RulesEvaluator:
                         kelly_fraction = min(kelly_fraction * 1.5, max_pos)
                         modifiers.append("away_fav_1.5x")
 
-        # Modifier 2: April-wide 50% reduction (all sports)
-        # Backtest: April is the only losing month (-71%). Reducing bets by 50%
-        # cuts the loss in half AND increases year-end bankroll by +$1,267.
+        # Modifier 2: April reduction for NBA/NHL only (playoff edge decay)
+        # The original -71% April loss was caused by the Kelly override bug + NBA/NHL
+        # playoff edge decay, not a universal April problem. ATP/EPL/La Liga are fine.
         now = datetime.now(timezone.utc)
-        if now.month == 4:
+        if now.month == 4 and sport in ("NBA", "NHL", "NBASPREAD", "NHLSPREAD", "NHLFG"):
             kelly_fraction *= 0.50
-            modifiers.append("april_0.5x")
+            modifiers.append("april_playoff_0.5x")
 
         # Modifier 3: NBA early R1 playoff reduction (Apr 13-30)
-        # Stacks with April reduction above: 0.5 * 0.25 = 0.125x total
         if sport == "NBA":
             if now.month == 4 and 13 <= now.day <= 30:
                 kelly_fraction *= 0.25

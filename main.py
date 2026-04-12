@@ -141,6 +141,9 @@ class EdgeRunner:
         # Track tickers with resting (unfilled) maker orders to prevent duplicates
         # Maps ticker -> timestamp when order was placed. Expires after RESTING_ORDER_TIMEOUT_SECONDS.
         self._resting_order_times: dict[str, float] = {}
+        # Batch race prevention: track how many orders were placed per game THIS cycle.
+        # Cleared at the start of each evaluation batch to prevent same-cycle bypass of MAX_PER_GAME.
+        self._pending_game_ids: dict[str, int] = {}  # game_id -> count of orders this cycle
         # Track initial discovery price — if price moves >20% from discovery,
         # the event is likely in progress (mid-game price spike)
         # Persisted to disk so restarts don't lose the baseline
@@ -152,6 +155,7 @@ class EdgeRunner:
         self._min_price_change: Decimal = Decimal("0.01")
         # Re-analyze even without price change after this many seconds
         self._max_stale_analysis: float = 300.0  # 5 minutes
+        self._risk_mgr = None  # Initialized in _start() after portfolio sync
 
         # Modules
         self._feed: KalshiFeed = KalshiFeed(
@@ -258,6 +262,9 @@ class EdgeRunner:
                     market_data = self._prepare_market_for_analysis(update)
                     if market_data is not None:
                         markets_to_analyze.append(market_data)
+
+                # Reset per-cycle game tracking before processing this batch
+                self._pending_game_ids.clear()
 
                 # Evaluate each market with rules engine (instant, no API cost)
                 for market_data in markets_to_analyze:
@@ -562,6 +569,13 @@ class EdgeRunner:
 
         game_id = _extract_game_id(ticker)
 
+        # Batch race prevention: block if we already placed an order on this game THIS cycle
+        if game_id:
+            pending_count = self._pending_game_ids.get(game_id, 0)
+            if pending_count >= 2:  # Match MAX_PER_GAME
+                console.print(f"[yellow]BATCH SKIP {ticker}: already placed {pending_count} orders on game {game_id} this cycle.[/yellow]")
+                return
+
         # Correlation-aware sizing: if we already hold a position on the same game
         # (e.g., NBA game winner + NBA spread), reduce Kelly by 50% to avoid
         # doubling exposure on a single event outcome.
@@ -608,33 +622,20 @@ class EdgeRunner:
             )
             return
 
-        # --- APPLY TIERED DRAWDOWN KELLY MULTIPLIER ---
+        # --- APPLY UNITIZED NAV DRAWDOWN KELLY MULTIPLIER ---
 
-        if gate_result.kelly_multiplier < 1.0:
-            original_kelly = decision.kelly_fraction
-            decision.kelly_fraction *= gate_result.kelly_multiplier
-            console.print(
-                f"[yellow]DD Kelly reduction: {original_kelly:.4f} -> "
-                f"{decision.kelly_fraction:.4f} (x{gate_result.kelly_multiplier:.2f})[/yellow]"
-            )
-
-            # Drawdown-adaptive strategy: during DD, only trade highest-Sharpe markets
-            # Skip marginal sports (Tier 3) to focus capital on best risk-adjusted edges
-            from config.markets import get_sport as _dd_sport
-            _dd_s = _dd_sport(ticker)
-            TIER3_SPORTS = ("NCAAMB", "NFLGW", "NBA", "WNBA", "WTA", "LALIGA", "ATPCH", "LIGUE1")
-            if _dd_s in TIER3_SPORTS:
-                await log_decision(
-                    ticker=ticker, title=ticker, action=decision.action,
-                    edge=decision.edge, kelly_fraction=decision.kelly_fraction,
-                    confidence=decision.confidence_score, rationale=decision.rationale,
-                    market_prob=decision.implied_market_probability,
-                    agent_prob=decision.agent_calculated_probability,
-                    gate_results="DD_ADAPTIVE", accepted=False,
-                    rejection_reason=f"Drawdown mode: {_dd_s} is Tier 3 (low Sharpe) — skipping",
-                    market_type=market_type,
-                )
+        if hasattr(self, '_risk_mgr') and self._risk_mgr:
+            nav_kelly = float(self._risk_mgr.get_kelly_multiplier())
+            if nav_kelly <= 0.0:
+                console.print(f"[red bold]HALTED by NAV drawdown >= 40%[/red bold]")
                 return
+            if nav_kelly < 1.0:
+                original_kelly = decision.kelly_fraction
+                decision.kelly_fraction *= nav_kelly
+                console.print(
+                    f"[yellow]NAV DD Kelly reduction: {original_kelly:.4f} -> "
+                    f"{decision.kelly_fraction:.4f} (x{nav_kelly:.2f})[/yellow]"
+                )
 
         # --- DYNAMIC KELLY: scale based on bankroll size ---
         # At low bankroll, individual bets are small enough that higher Kelly is safe.
@@ -665,6 +666,10 @@ class EdgeRunner:
             # Track resting order to prevent duplicate maker orders
             import time as _time
             self._resting_order_times[ticker] = _time.monotonic()
+
+            # Batch race prevention: count this order toward the in-cycle game limit
+            if game_id:
+                self._pending_game_ids[game_id] = self._pending_game_ids.get(game_id, 0) + 1
 
             bankroll = self._cache.get_bankroll()
             bankroll_pct = (
@@ -822,12 +827,8 @@ class EdgeRunner:
                             f"[green]Cash increased: ${self._last_known_bankroll} -> ${cash_bal} "
                             f"(deposit or wins settled) | Portfolio: ${portfolio_val}[/green]"
                         )
-                    # Update HWM based on portfolio value, not just cash
-                    if self._risk_gates and portfolio_val > self._risk_gates._high_water_mark:
-                        self._risk_gates._high_water_mark = portfolio_val
-                        from data.hwm_cache import save_hwm
-                        save_hwm(portfolio_val)
-                        console.print(f"[green]New HWM: ${portfolio_val} (portfolio value)[/green]")
+                    if hasattr(self, '_risk_mgr') and self._risk_mgr:
+                        self._risk_mgr.update_from_trading(portfolio_val)
                     self._last_known_bankroll = cash_bal
                     self._last_bankroll_sync = _wt.monotonic()
             except Exception:
@@ -1058,30 +1059,17 @@ class EdgeRunner:
         self._starting_bankroll = self._cache.get_bankroll()
         starting_portfolio = self._cache.get_portfolio_value()
 
-        # Load persistent high-water mark (survives restarts)
-        # HWM tracks portfolio value (cash + positions), not just cash
-        from data.hwm_cache import load_hwm, save_hwm
-        from config.settings import RESET_HWM
-        persistent_hwm = load_hwm()
-        if RESET_HWM or persistent_hwm is None:
-            persistent_hwm = starting_portfolio
-            save_hwm(starting_portfolio)
-            console.print(f"[yellow]HWM reset to portfolio value ${starting_portfolio}[/yellow]")
-        else:
-            # If portfolio value exceeds stored HWM, update it
-            if starting_portfolio > persistent_hwm:
-                persistent_hwm = starting_portfolio
-                save_hwm(starting_portfolio)
-            console.print(f"[blue]Loaded persistent HWM: ${persistent_hwm} | Portfolio: ${starting_portfolio}[/blue]")
+        from data.unitized_risk import UnitizedRiskManager
+        self._risk_mgr = UnitizedRiskManager(initial_equity=starting_portfolio)
 
-        self._risk_gates = RiskGates(
-            starting_bankroll=self._starting_bankroll,
-            persistent_hwm=persistent_hwm,
-        )
-        self._risk_gates.set_hwm_callback(save_hwm)
+        self._risk_gates = RiskGates(starting_bankroll=self._starting_bankroll)
+
+        nav_status = self._risk_mgr.get_status()
         console.print(
             f"[blue]Starting bankroll: ${self._starting_bankroll} | "
-            f"HWM: ${persistent_hwm} | 6-gate risk system initialized.[/blue]"
+            f"NAV: ${nav_status['nav']:.4f} | HWM NAV: ${nav_status['hwm_nav']:.4f} | "
+            f"DD: {nav_status['drawdown_pct']:.1f}% | "
+            f"Shares: {nav_status['shares']:.2f} | 6-gate risk system initialized.[/blue]"
         )
 
         # Connect brier_tracker to risk_gates (now that risk_gates exists)

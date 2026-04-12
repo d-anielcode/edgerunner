@@ -477,14 +477,15 @@ class PositionMonitor:
         )
 
         if result is not None:
-            # Record exit for potential re-entry
-            self._exited_positions[position.kalshi_ticker] = {
-                "side": position.side,
-                "entry_price": float(position.avg_price),
-                "exit_price": float(current_price),
-                "exit_reason": reason,
-                "exit_time": time.monotonic(),
-            }
+            # Re-entry recording disabled: caused mid-game churn and bypasses
+            # pre-game safety checks (see UCL RMA-BMU 2026-04-07).
+            # self._exited_positions[position.kalshi_ticker] = {
+            #     "side": position.side,
+            #     "entry_price": float(position.avg_price),
+            #     "exit_price": float(current_price),
+            #     "exit_reason": reason,
+            #     "exit_time": time.monotonic(),
+            # }
 
             # Remove from cache and peak tracking (persist to disk)
             self._cache.remove_position(position.kalshi_ticker)
@@ -547,7 +548,9 @@ class PositionMonitor:
         await self._cleanup_resting_orders()
 
         # 3. Check exited positions for re-entry opportunities
-        await self._check_reentry_opportunities()
+        # DISABLED: Re-entry bypasses pre-game safety checks and causes
+        # mid-game churn with double fees (see UCL RMA-BMU 2026-04-07).
+        # await self._check_reentry_opportunities()
 
     async def _cleanup_resting_orders(self) -> None:
         """
