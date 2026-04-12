@@ -831,6 +831,13 @@ class EdgeRunner:
                         self._risk_mgr.update_from_trading(portfolio_val)
                     self._last_known_bankroll = cash_bal
                     self._last_bankroll_sync = _wt.monotonic()
+
+                    # Daily Bayesian time decay (self-checks 24h elapsed internally)
+                    try:
+                        from data.bayesian_cache import apply_daily_time_decay
+                        apply_daily_time_decay()
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
