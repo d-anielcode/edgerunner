@@ -136,13 +136,13 @@ EDGE_TABLE_NFLTD = {
 EDGE_TABLES = {
     "NBA": EDGE_TABLE_NBA,
     "NHL": EDGE_TABLE_NHL,
-    "EPL": EDGE_TABLE_EPL,
+    # "EPL": EDGE_TABLE_EPL,  # DISABLED: 0% WR realistic backtest
     "UCL": EDGE_TABLE_UCL,
-    "LALIGA": EDGE_TABLE_LALIGA,
+    # "LALIGA": EDGE_TABLE_LALIGA,  # DISABLED: 0% WR realistic backtest
     "WNBA": EDGE_TABLE_WNBA,
-    "UFC": EDGE_TABLE_UFC,
+    # "UFC": EDGE_TABLE_UFC,  # DISABLED: 0% WR realistic backtest
     "NCAAMB": EDGE_TABLE_NCAAMB,
-    "NCAAWB": EDGE_TABLE_NCAAWB,
+    # "NCAAWB": EDGE_TABLE_NCAAWB,  # DISABLED: -19.7% ROI realistic backtest
     # DISABLED: -10% ROI
     # "WTA": EDGE_TABLE_WTA,
     "MLB": EDGE_TABLE_MLB,
@@ -193,12 +193,12 @@ SPORT_PARAMS = {
     "NBASPREAD": {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # Decayed in Jan
     "NFLSPREAD": {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # Decayed in Jan
     # --- NOT VALIDATED (keep original conservative params) ---
-    "EPL":    {"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},
+    # "EPL":    {"kelly_mult": 0.25, "max_position": 0.10, "min_edge": 0.10},  # DISABLED: 0% WR in realistic backtest (14 trades, -69% ROI)
     "UCL":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Raised: break-even ~10.5%
-    "LALIGA": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
+    # "LALIGA": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},  # DISABLED: 0% WR in realistic backtest (4 trades, -108% ROI)
     "WNBA":   {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.10},  # Raised: break-even ~10.5%
-    "UFC":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Raised: break-even ~10.5%
-    "NCAAWB": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Raised: break-even ~10.5%
+    # "UFC":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # DISABLED: 0% WR in realistic backtest (5 trades, -98% ROI)
+    # "NCAAWB": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # DISABLED: -19.7% ROI in realistic backtest (18 trades, 16.7% WR)
     # "WTA":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: -10% ROI in research; RE-ENABLED comment was wrong
     "MLB":    {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # 50% PT at 76-84c. Conservative.
     # --- NEW: Risk-adjusted optimization (all STRONG ADD, Sharpe > 0.2, MaxDD < $4) ---
