@@ -112,6 +112,77 @@ def _compute_ticker_pnl(fills: list[dict], settlement: dict | None) -> tuple:
     return total_cost, total_revenue, buy_count
 
 
+def _compute_fill_cash_change(fill: dict) -> float:
+    """Compute the exact cash change from a fill (buy or sell)."""
+    action = fill.get("action", "")
+    side = fill.get("side", "")
+    count = float(fill.get("count_fp", 0))
+    yes_p = float(fill.get("yes_price_dollars", 0))
+    no_p = float(fill.get("no_price_dollars", 0))
+    fee = float(fill.get("fee_cost", 0))
+
+    if action == "buy":
+        price = no_p if side == "no" else yes_p
+        return -(price * count + fee)
+    elif action == "sell":
+        if side == "yes":
+            return no_p * count - fee  # Sell YES closing NO = get NO value
+        else:
+            return yes_p * count - fee  # Sell NO closing YES = get YES value
+    return 0.0
+
+
+def _build_balance_timeline(fills: list, settlements: list, current_balance: float) -> list[dict]:
+    """
+    Build a timeline of balance snapshots by backtracking from current balance.
+    Returns list of {ts, balance, cash_change, type, ticker} sorted chronologically.
+    """
+    events = []
+
+    for f in fills:
+        cash = _compute_fill_cash_change(f)
+        events.append({
+            "ts": f.get("created_time", ""),
+            "cash": cash,
+            "type": "fill",
+            "ticker": f.get("ticker", ""),
+            "desc": f"{f.get('action', '')} {f.get('side', '')} {float(f.get('count_fp', 0)):.0f}x",
+        })
+
+    for s in settlements:
+        revenue_cents = s.get("revenue", 0)
+        if revenue_cents > 0:
+            events.append({
+                "ts": s.get("settled_time", s.get("created_time", "")),
+                "cash": revenue_cents / 100.0,
+                "type": "settlement",
+                "ticker": s.get("ticker", ""),
+                "desc": f"settle {s.get('market_result', '')}",
+            })
+
+    events.sort(key=lambda e: e["ts"])
+
+    # Backtrack from current balance to find initial
+    balance = current_balance
+    for e in reversed(events):
+        balance -= e["cash"]
+
+    # Replay forward, recording balance after each event
+    timeline = []
+    for e in events:
+        balance += e["cash"]
+        timeline.append({
+            "ts": e["ts"],
+            "balance": round(balance, 2),
+            "cash_change": round(e["cash"], 2),
+            "type": e["type"],
+            "ticker": e["ticker"],
+            "desc": e["desc"],
+        })
+
+    return timeline
+
+
 def _filter_agent_fills(fills: list[dict]) -> list[dict]:
     """Filter out fills from before the agent started (personal trades)."""
     return [f for f in fills if f.get("created_time", "") >= AGENT_START_DATE]
@@ -411,88 +482,24 @@ def api_settlements():
 
 @app.route("/api/daily-pnl")
 def api_daily_pnl():
-    """
-    ACCURATE daily balance reconstruction via backtracking.
-
-    Starts from the current known balance, then works backwards through
-    every fill and settlement to reconstruct what the balance was each day.
-
-    Key formula:
-    - Buy fill: cash OUT = price * count + fee
-    - Sell fill: cash IN = NO_price * count - fee (for sell YES closing NO)
-    - Settlement: cash IN = revenue field (in cents / 100)
-    """
+    """Accurate daily balance via backtracking from current known balance."""
     try:
         fills = client.get_fills(paginate_all=True)
+        settlements = client.get_settlements(paginate_all=True)
+        current_balance = client.get_balance()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    try:
-        settlements = client.get_settlements(paginate_all=True)
-    except Exception:
-        settlements = []
+    timeline = _build_balance_timeline(fills, settlements, current_balance)
 
-    # Get current balance
-    try:
-        current_balance = client.get_balance()
-    except Exception:
-        current_balance = 0.0
-
-    # Build timeline of ALL cash-changing events
-    events = []
-
-    for f in fills:
-        action = f.get("action", "")
-        side = f.get("side", "")
-        count = float(f.get("count_fp", 0))
-        yes_p = float(f.get("yes_price_dollars", 0))
-        no_p = float(f.get("no_price_dollars", 0))
-        fee = float(f.get("fee_cost", 0))
-        ts = f.get("created_time", "")
-
-        if action == "buy":
-            price = no_p if side == "no" else yes_p
-            cash_change = -(price * count + fee)
-        elif action == "sell":
-            # Sell YES (closing NO) = get NO price value
-            # Sell NO (closing YES) = get YES price value
-            if side == "yes":
-                cash_change = no_p * count - fee
-            else:
-                cash_change = yes_p * count - fee
-        else:
-            cash_change = 0
-
-        events.append({"ts": ts, "cash": cash_change})
-
-    for s in settlements:
-        revenue_cents = s.get("revenue", 0)
-        if revenue_cents > 0:
-            revenue = revenue_cents / 100.0
-            ts = s.get("settled_time", s.get("created_time", ""))
-            events.append({"ts": ts, "cash": revenue})
-
-    # Sort forward
-    events.sort(key=lambda e: e["ts"])
-
-    # Backtrack: undo all events from current balance to find initial
-    balance = current_balance
-    for e in reversed(events):
-        balance -= e["cash"]
-    initial_balance = balance
-
-    # Replay forward, recording daily end-of-day balance
-    balance = initial_balance
+    # Aggregate to daily (end of day balance)
     daily: dict[str, dict] = {}
     daily_trades: dict[str, int] = defaultdict(int)
-
-    for e in events:
-        balance += e["cash"]
-        date = e["ts"][:10]
-        daily[date] = balance
+    for t in timeline:
+        date = t["ts"][:10]
+        daily[date] = t["balance"]
         daily_trades[date] += 1
 
-    # Filter to agent era and build result
     result_list = []
     prev_balance = TOTAL_DEPOSITS
     for d in sorted(daily.keys()):
@@ -501,18 +508,93 @@ def api_daily_pnl():
             continue
         bal = round(daily[d], 2)
         day_pnl = round(bal - prev_balance, 2)
-        result_list.append(
-            {
-                "date": d,
-                "pnl": day_pnl,
-                "cumulative": round(bal - TOTAL_DEPOSITS, 2),
-                "portfolio_value": bal,
-                "trades": daily_trades.get(d, 0),
-            }
-        )
+        result_list.append({
+            "date": d,
+            "pnl": day_pnl,
+            "cumulative": round(bal - TOTAL_DEPOSITS, 2),
+            "portfolio_value": bal,
+            "trades": daily_trades.get(d, 0),
+        })
         prev_balance = bal
 
     return jsonify(result_list)
+
+
+@app.route("/api/trade-timeline")
+def api_trade_timeline():
+    """
+    Full trade-level timeline with balance after each event.
+    Shows every fill and settlement with the exact cash change and running balance.
+    """
+    try:
+        fills = client.get_fills(paginate_all=True)
+        settlements = client.get_settlements(paginate_all=True)
+        current_balance = client.get_balance()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    timeline = _build_balance_timeline(fills, settlements, current_balance)
+
+    # Filter to agent era and add sport
+    result = []
+    for t in timeline:
+        if t["ts"][:10] < AGENT_START_DATE:
+            continue
+        result.append({
+            "time": t["ts"][:19],
+            "ticker": t["ticker"],
+            "sport": _detect_sport(t["ticker"]),
+            "type": t["type"],
+            "desc": t["desc"],
+            "cash_change": t["cash_change"],
+            "balance": t["balance"],
+        })
+
+    # Most recent first
+    result.reverse()
+    return jsonify(result)
+
+
+@app.route("/api/open-positions")
+def api_open_positions():
+    """
+    Currently held positions with entry cost, current value, and unrealized P&L.
+    """
+    try:
+        positions = client.get_positions()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    result = []
+    for pos in positions:
+        position_qty = float(pos.get("position_fp", 0))
+        if position_qty == 0:
+            continue
+
+        ticker = pos.get("ticker", "")
+        side = "NO" if position_qty < 0 else "YES"
+        qty = abs(position_qty)
+        exposure = float(pos.get("market_exposure_dollars", 0))
+        total_traded = float(pos.get("total_traded_dollars", 0))
+        fees = float(pos.get("fees_paid_dollars", 0))
+        entry_cost = total_traded + fees
+
+        # Unrealized P&L = current value - entry cost
+        # For NO positions: if we sold now at current no_price, we'd get exposure
+        unrealized = exposure - entry_cost if entry_cost > 0 else 0
+
+        result.append({
+            "ticker": ticker,
+            "sport": _detect_sport(ticker),
+            "side": side,
+            "qty": qty,
+            "entry_cost": round(entry_cost, 2),
+            "current_value": round(exposure, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "fees": round(fees, 2),
+        })
+
+    return jsonify(result)
 
 
 @app.route("/api/sport-breakdown")

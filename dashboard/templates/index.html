@@ -277,26 +277,47 @@
     </table>
 </div>
 
+<!-- Open Positions -->
+<div class="table-section">
+    <h2>Open Positions</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Ticker</th>
+                <th>Sport</th>
+                <th>Side</th>
+                <th>Qty</th>
+                <th>Entry Cost</th>
+                <th>Current Value</th>
+                <th>Unrealized P&amp;L</th>
+            </tr>
+        </thead>
+        <tbody id="positionsBody">
+            <tr><td colspan="7" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Trade Timeline -->
+<div class="table-section">
+    <h2>Trade Timeline <span style="font-size:12px;color:#8892b0;font-weight:normal">(every cash-changing event with running balance)</span></h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Sport</th>
+                <th>Action</th>
+                <th>Cash Change</th>
+                <th>Balance After</th>
+            </tr>
+        </thead>
+        <tbody id="timelineBody">
+            <tr><td colspan="5" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
 <div class="two-col">
-    <!-- Open Positions -->
-    <div class="table-section">
-        <h2>Open Positions</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Ticker</th>
-                    <th>Sport</th>
-                    <th>Side</th>
-                    <th>Qty</th>
-                    <th>Entry Price</th>
-                    <th>Exposure</th>
-                </tr>
-            </thead>
-            <tbody id="positionsBody">
-                <tr><td colspan="6" class="loading">Loading...</td></tr>
-            </tbody>
-        </table>
-    </div>
 
     <!-- Sport Breakdown -->
     <div class="table-section">
@@ -499,12 +520,12 @@
 
     async function loadPositions() {
         try {
-            const res = await fetch('/api/positions');
+            const res = await fetch('/api/open-positions');
             const positions = await res.json();
 
             const tbody = document.getElementById('positionsBody');
             if (!positions.length) {
-                tbody.innerHTML = '<tr><td colspan="6" class="loading">No open positions</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="loading">No open positions</td></tr>';
                 return;
             }
 
@@ -513,11 +534,36 @@
                 <td><span class="sport-tag">${p.sport}</span></td>
                 <td>${p.side}</td>
                 <td>${p.qty}</td>
-                <td>${fmt$(p.entry_price)}</td>
-                <td>${fmt$(p.exposure)}</td>
+                <td>${fmt$(p.entry_cost)}</td>
+                <td>${fmt$(p.current_value)}</td>
+                <td class="${pnlClass(p.unrealized_pnl)}">${p.unrealized_pnl >= 0 ? '+' : ''}${fmt$(p.unrealized_pnl)}</td>
             </tr>`).join('');
         } catch (e) {
             console.error('Positions error:', e);
+        }
+    }
+
+    async function loadTimeline() {
+        try {
+            const res = await fetch('/api/trade-timeline');
+            const timeline = await res.json();
+
+            const tbody = document.getElementById('timelineBody');
+            if (!timeline.length) {
+                tbody.innerHTML = '<tr><td colspan="5" class="loading">No trade history</td></tr>';
+                return;
+            }
+
+            // Show last 50 events
+            tbody.innerHTML = timeline.slice(0, 50).map(t => `<tr>
+                <td style="font-size:12px">${t.time.replace('T', ' ')}</td>
+                <td><span class="sport-tag">${t.sport}</span></td>
+                <td style="font-size:12px">${t.desc}</td>
+                <td class="${pnlClass(t.cash_change)}">${t.cash_change >= 0 ? '+' : ''}${fmt$(t.cash_change)}</td>
+                <td>${fmt$(t.balance)}</td>
+            </tr>`).join('');
+        } catch (e) {
+            console.error('Timeline error:', e);
         }
     }
 
@@ -563,6 +609,7 @@
             loadSummary(),
             loadFills(),
             loadPositions(),
+            loadTimeline(),
             loadSportBreakdown(),
             loadChart()
         ]);
