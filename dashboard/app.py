@@ -112,6 +112,76 @@ def _compute_ticker_pnl(fills: list[dict], settlement: dict | None) -> tuple:
     return total_cost, total_revenue, buy_count
 
 
+def _parse_ticker(ticker: str) -> dict:
+    """
+    Parse a Kalshi ticker into human-readable components.
+
+    Examples:
+        KXNBAGAME-26APR12ORLBOS-ORL → {sport: NBA, date: Apr 12, matchup: ORL vs BOS, pick: ORL}
+        KXNBASPREAD-26APR12ORLBOS-ORL6 → {sport: NBA Spread, date: Apr 12, matchup: ORL vs BOS, pick: ORL +6}
+        KXMLBTOTAL-26APR121335AZPHI-5 → {sport: MLB Total, date: Apr 12, matchup: AZ vs PHI, line: Over 5}
+        KXNBAPTS-26APR12ORLBOS-ORLJTATUM0-25 → {sport: NBA PTS, date: Apr 12, player: J TATUM, line: 25+}
+    """
+    import re
+
+    result = {"sport": _detect_sport(ticker), "date": "", "matchup": "", "pick": "", "raw": ticker}
+
+    # Extract date: pattern is 2-digit year + 3-letter month + 2-digit day
+    date_match = re.search(r'-(\d{2})([A-Z]{3})(\d{2})', ticker)
+    if date_match:
+        months = {'JAN': '1', 'FEB': '2', 'MAR': '3', 'APR': '4', 'MAY': '5', 'JUN': '6',
+                  'JUL': '7', 'AUG': '8', 'SEP': '9', 'OCT': '10', 'NOV': '11', 'DEC': '12'}
+        month_str = date_match.group(2)
+        day = date_match.group(3)
+        result["date"] = f"{month_str.title()} {int(day)}"
+
+    # Extract teams/matchup: 3-letter codes after the date
+    # Pattern: date followed by optional time (4 digits) then TEAMATEAMB
+    teams_match = re.search(r'\d{2}[A-Z]{3}\d{2}(\d{4})?([A-Z]{2,4})([A-Z]{2,4})-', ticker)
+    if teams_match:
+        team_a = teams_match.group(2)
+        team_b = teams_match.group(3)
+        result["matchup"] = f"{team_a} vs {team_b}"
+
+    # Extract pick: everything after the last dash
+    parts = ticker.split('-')
+    if len(parts) >= 3:
+        pick_raw = parts[-1]
+        # For spreads: ORL6 → ORL +6
+        spread_match = re.match(r'([A-Z]{2,4})(\d+)$', pick_raw)
+        if spread_match and result["sport"] in ("NBASPREAD", "NHLSPREAD", "NFLSPREAD"):
+            result["pick"] = f"{spread_match.group(1)} +{spread_match.group(2)}"
+        # For totals: just a number → Over N
+        elif pick_raw.isdigit() and "TOTAL" in result["sport"]:
+            result["pick"] = f"Over {pick_raw}"
+        # For player props: ORLJTATUM0-25 format
+        elif "PTS" in result["sport"] or "REB" in result["sport"] or "AST" in result["sport"] or "3PT" in result["sport"]:
+            # Try to extract player name from the pick
+            player_match = re.match(r'([A-Z]{2,4})([A-Z][A-Za-z]+\d*)-?(\d+)?', pick_raw)
+            if player_match:
+                result["pick"] = pick_raw
+            else:
+                result["pick"] = pick_raw
+        else:
+            result["pick"] = pick_raw
+
+    # Better matchup parsing for game winners
+    # KXNBAGAME-26APR12ORLBOS-ORL → teams are in the middle segment
+    mid_match = re.search(r'\d{2}[A-Z]{3}\d{2}(\d{4})?([A-Z]{3,8})-', ticker)
+    if mid_match:
+        teams_str = mid_match.group(2)
+        # Split 6-letter combo into two 3-letter teams
+        if len(teams_str) == 6:
+            result["matchup"] = f"{teams_str[:3]} vs {teams_str[3:]}"
+        elif len(teams_str) == 8:
+            result["matchup"] = f"{teams_str[:4]} vs {teams_str[4:]}"
+        elif len(teams_str) == 7:
+            # Try 3+4 or 4+3
+            result["matchup"] = f"{teams_str[:3]} vs {teams_str[3:]}"
+
+    return result
+
+
 def _compute_fill_cash_change(fill: dict) -> float:
     """Compute the exact cash change from a fill (buy or sell)."""
     action = fill.get("action", "")
@@ -427,10 +497,14 @@ def api_fills():
         all_times = [_parse_ts(f.get("created_time", "")) for f in ticker_fills]
         earliest = min(all_times) if all_times else datetime.min.replace(tzinfo=timezone.utc)
 
+        parsed = _parse_ticker(ticker)
         result.append(
             {
                 "ticker": ticker,
-                "sport": _detect_sport(ticker),
+                "sport": parsed["sport"],
+                "date": parsed["date"],
+                "matchup": parsed["matchup"],
+                "pick": parsed["pick"],
                 "buys": buys,
                 "sells": sells,
                 "total_cost": round(total_cost, 2),
@@ -541,10 +615,14 @@ def api_trade_timeline():
     for t in timeline:
         if t["ts"][:10] < AGENT_START_DATE:
             continue
+        parsed = _parse_ticker(t["ticker"])
         result.append({
             "time": t["ts"][:19],
             "ticker": t["ticker"],
-            "sport": _detect_sport(t["ticker"]),
+            "sport": parsed["sport"],
+            "date": parsed["date"],
+            "matchup": parsed["matchup"],
+            "pick": parsed["pick"],
             "type": t["type"],
             "desc": t["desc"],
             "cash_change": t["cash_change"],
@@ -584,9 +662,13 @@ def api_open_positions():
         # For NO positions: if we sold now at current no_price, we'd get exposure
         unrealized = exposure - entry_cost if entry_cost > 0 else 0
 
+        parsed = _parse_ticker(ticker)
         result.append({
             "ticker": ticker,
-            "sport": _detect_sport(ticker),
+            "sport": parsed["sport"],
+            "date": parsed["date"],
+            "matchup": parsed["matchup"],
+            "pick": parsed["pick"],
             "side": side,
             "qty": qty,
             "entry_cost": round(entry_cost, 2),

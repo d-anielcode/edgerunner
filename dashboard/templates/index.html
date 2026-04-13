@@ -264,19 +264,18 @@
     <table>
         <thead>
             <tr>
-                <th>Ticker</th>
+                <th>Date</th>
                 <th>Sport</th>
-                <th>Buys</th>
-                <th>Sells</th>
+                <th>Matchup</th>
+                <th>Pick</th>
                 <th>Cost</th>
                 <th>Revenue</th>
                 <th>P&amp;L</th>
                 <th>Status</th>
-                <th>Settlement</th>
             </tr>
         </thead>
         <tbody id="fillsBody">
-            <tr><td colspan="9" class="loading">Loading...</td></tr>
+            <tr><td colspan="8" class="loading">Loading...</td></tr>
         </tbody>
     </table>
 </div>
@@ -287,13 +286,14 @@
     <table>
         <thead>
             <tr>
-                <th>Ticker</th>
                 <th>Sport</th>
+                <th>Matchup</th>
+                <th>Pick</th>
                 <th>Side</th>
                 <th>Qty</th>
-                <th>Entry Cost</th>
-                <th>Current Value</th>
-                <th>Unrealized P&amp;L</th>
+                <th>Cost</th>
+                <th>Value</th>
+                <th>P&amp;L</th>
             </tr>
         </thead>
         <tbody id="positionsBody">
@@ -310,9 +310,10 @@
             <tr>
                 <th>Time</th>
                 <th>Sport</th>
+                <th>Matchup</th>
                 <th>Action</th>
                 <th>Cash Change</th>
-                <th>Balance After</th>
+                <th>Balance</th>
             </tr>
         </thead>
         <tbody id="timelineBody">
@@ -558,18 +559,17 @@
             // weekPnl and weekDeposits are set by loadSummary()
 
             tbody.innerHTML = fills.map(f => {
-                const buySummary = f.buys.map(b => `${b.count}x @ ${b.time}`).join(', ') || '-';
+                const buySummary = f.buys.map(b => `${b.count}x`).join('+') || '-';
                 const sellSummary = f.sells.map(s => `${s.count}x @ ${s.time}`).join(', ') || '-';
-                return `<tr>
-                    <td title="${f.ticker}">${f.ticker.length > 28 ? f.ticker.slice(0, 28) + '...' : f.ticker}</td>
+                return `<tr title="${f.ticker}">
+                    <td style="font-size:12px">${f.date || '-'}</td>
                     <td><span class="sport-tag">${f.sport}</span></td>
-                    <td>${buySummary}</td>
-                    <td>${sellSummary}</td>
+                    <td>${f.matchup || '-'}</td>
+                    <td>${f.pick || '-'}</td>
                     <td>${fmt$(f.total_cost)}</td>
                     <td>${fmt$(f.total_revenue)}</td>
-                    <td class="${pnlClass(f.net_pnl)}">${fmt$(f.net_pnl)}</td>
+                    <td class="${pnlClass(f.net_pnl)}">${f.net_pnl >= 0 ? '+' : ''}${fmt$(f.net_pnl)}</td>
                     <td>${badgeHtml(f.status)}</td>
-                    <td>${f.settlement || '-'}</td>
                 </tr>`;
             }).join('');
         } catch (e) {
@@ -588,9 +588,10 @@
                 return;
             }
 
-            tbody.innerHTML = positions.map(p => `<tr>
-                <td title="${p.ticker}">${p.ticker.length > 28 ? p.ticker.slice(0, 28) + '...' : p.ticker}</td>
+            tbody.innerHTML = positions.map(p => `<tr title="${p.ticker}">
                 <td><span class="sport-tag">${p.sport}</span></td>
+                <td>${p.matchup || '-'}</td>
+                <td>${p.pick || '-'}</td>
                 <td>${p.side}</td>
                 <td>${p.qty}</td>
                 <td>${fmt$(p.entry_cost)}</td>
@@ -614,10 +615,11 @@
             }
 
             // Show last 50 events
-            tbody.innerHTML = timeline.slice(0, 50).map(t => `<tr>
-                <td style="font-size:12px">${t.time.replace('T', ' ')}</td>
+            tbody.innerHTML = timeline.slice(0, 50).map(t => `<tr title="${t.ticker}">
+                <td style="font-size:11px">${t.time.replace('T', ' ')}</td>
                 <td><span class="sport-tag">${t.sport}</span></td>
-                <td style="font-size:12px">${t.desc}</td>
+                <td style="font-size:12px">${t.matchup || '-'}</td>
+                <td style="font-size:12px">${t.desc} ${t.pick ? '(' + t.pick + ')' : ''}</td>
                 <td class="${pnlClass(t.cash_change)}">${t.cash_change >= 0 ? '+' : ''}${fmt$(t.cash_change)}</td>
                 <td>${fmt$(t.balance)}</td>
             </tr>`).join('');
