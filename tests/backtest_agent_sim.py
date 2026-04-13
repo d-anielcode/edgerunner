@@ -67,61 +67,63 @@ CUSUM_H = 3.0              # alarm threshold
 CUSUM_KELLY_MULT = 0.25    # Kelly multiplier when alarmed
 
 SPORT_PARAMS = {
+    # Game winners + spreads (current live agent)
     "NBA":       {"km": 0.04, "mp": 0.03, "me": 0.15},
     "NHL":       {"km": 0.15, "mp": 0.08, "me": 0.12},
-    "EPL":       {"km": 0.25, "mp": 0.10, "me": 0.10},
     "UCL":       {"km": 0.12, "mp": 0.06, "me": 0.10},
-    "LALIGA":    {"km": 0.08, "mp": 0.04, "me": 0.15},
     "WNBA":      {"km": 0.15, "mp": 0.08, "me": 0.10},
-    "UFC":       {"km": 0.12, "mp": 0.06, "me": 0.10},
-    "NCAAMB":    {"km": 0.10, "mp": 0.05, "me": 0.10},
-    "NCAAWB":    {"km": 0.12, "mp": 0.06, "me": 0.10},
     "ATP":       {"km": 0.12, "mp": 0.06, "me": 0.10},
     "NFLTD":     {"km": 0.20, "mp": 0.10, "me": 0.10},
     "NHLSPREAD": {"km": 0.15, "mp": 0.08, "me": 0.10},
     "NBASPREAD": {"km": 0.06, "mp": 0.03, "me": 0.12},
     "NFLSPREAD": {"km": 0.06, "mp": 0.03, "me": 0.12},
     "MLB":       {"km": 0.06, "mp": 0.03, "me": 0.12},
-    "NFLGW":     {"km": 0.12, "mp": 0.06, "me": 0.10},
     "NFLTT":     {"km": 0.10, "mp": 0.05, "me": 0.10},
     "CFB":       {"km": 0.08, "mp": 0.04, "me": 0.12},
+    # Player props — Buy NO on star player Overs
+    "NBA_3PT":   {"km": 0.10, "mp": 0.05, "me": 0.10},
+    "NBA_PTS":   {"km": 0.08, "mp": 0.04, "me": 0.10},
+    "NBA_REB":   {"km": 0.08, "mp": 0.04, "me": 0.10},
+    "NBA_AST":   {"km": 0.08, "mp": 0.04, "me": 0.10},
+    # DISABLED: EPL, LALIGA, UFC, NCAAMB, NCAAWB, NFLGW
 }
 
 EDGE_TABLES = {
-    "EPL":      {(71, 85): 0.485},
     "UCL":      {(66, 70): 0.400, (76, 85): 0.641},
-    "LALIGA":   {(81, 90): 0.588},
     "WNBA":     {(55, 62): 0.380, (71, 77): 0.550, (83, 87): 0.540},
-    "UFC":      {(76, 85): 0.622},
-    "NCAAMB":   {(66, 70): 0.536, (71, 80): 0.656, (82, 90): 0.770},
-    "NCAAWB":   {(61, 70): 0.600, (71, 80): 0.680, (81, 85): 0.750},
     "ATP":      {(71, 75): 0.650, (76, 80): 0.654, (81, 85): 0.765},
     "NFLTD":    {(55, 65): 0.492, (66, 75): 0.452, (76, 85): 0.545, (86, 95): 0.286},
     "NHLSPREAD": {(55, 65): 0.500, (66, 75): 0.450, (76, 90): 0.400},
     "NBASPREAD": {(55, 65): 0.480, (66, 75): 0.440, (76, 90): 0.380},
     "NFLSPREAD": {(55, 65): 0.480, (66, 75): 0.440, (76, 90): 0.380},
     "MLB":      {(76, 84): 0.640},
-    "NFLGW":    {(55, 65): 0.520, (66, 75): 0.580, (76, 90): 0.650},
     "NFLTT":    {(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},
     "CFB":      {(55, 65): 0.520, (66, 75): 0.550, (76, 85): 0.620},
+    # Player props
+    "NBA_3PT":  {(55, 64): 0.497, (65, 74): 0.594, (75, 84): 0.707, (85, 95): 0.771},
+    "NBA_PTS":  {(55, 64): 0.538, (65, 74): 0.657, (75, 84): 0.736, (85, 95): 0.765},
+    "NBA_REB":  {(55, 64): 0.574, (65, 74): 0.629, (75, 84): 0.701, (85, 95): 0.864},
+    "NBA_AST":  {(55, 64): 0.582, (65, 74): 0.644, (75, 84): 0.747, (85, 95): 0.827},
 }
 
 SPORT_PT = {
-    "EPL": 100, "NBA": 150, "NBASPREAD": 150, "NCAAMB": 100,
+    "NBA": 150, "NBASPREAD": 150,
     "NFLSPREAD": 200, "NFLTD": 100, "NHL": 100, "NHLSPREAD": 300,
-    "UCL": 100, "UFC": 200, "WNBA": 100, "ATP": 100,
-    "CFB": 200, "MLB": 50, "LALIGA": 200, "NFLGW": 100, "NFLTT": 150,
+    "UCL": 100, "WNBA": 100, "ATP": 100,
+    "CFB": 200, "MLB": 50, "NFLTT": 150,
+    "NBA_3PT": 200, "NBA_PTS": 150, "NBA_REB": 150, "NBA_AST": 150,
 }
 
 SPORT_FROM_PREFIX = {
-    "KXNBAGAME": "NBA", "KXNHLGAME": "NHL", "KXEPLGAME": "EPL",
-    "KXUCLGAME": "UCL", "KXLALIGAGAME": "LALIGA", "KXWNBAGAME": "WNBA",
-    "KXUFCFIGHT": "UFC", "KXNCAAMBGAME": "NCAAMB", "KXNCAAWBGAME": "NCAAWB",
+    "KXNBAGAME": "NBA", "KXNHLGAME": "NHL",
+    "KXUCLGAME": "UCL", "KXWNBAGAME": "WNBA",
     "KXATPMATCH": "ATP", "KXNFLANYTD": "NFLTD",
     "KXNHLSPREAD": "NHLSPREAD", "KXNBASPREAD": "NBASPREAD",
     "KXNFLSPREAD": "NFLSPREAD", "KXMLBGAME": "MLB",
-    "KXNFLGAME": "NFLGW", "KXNFLTEAMTOTAL": "NFLTT",
-    "KXCFBGAME": "CFB",
+    "KXNFLTEAMTOTAL": "NFLTT", "KXCFBGAME": "CFB",
+    # Player props
+    "KXNBAPTS": "NBA_PTS", "KXNBA3PT": "NBA_3PT",
+    "KXNBAREB": "NBA_REB", "KXNBAAST": "NBA_AST",
 }
 
 # Game ID regex — extract the matchup portion from ticker

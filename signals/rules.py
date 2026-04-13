@@ -170,7 +170,7 @@ EDGE_TABLES = {
     "NBA_3PT": {(55, 64): 0.497, (65, 74): 0.594, (75, 84): 0.707, (85, 95): 0.771},  # Sharpe 0.239, 644 trades
     "NBA_PTS": {(55, 64): 0.538, (65, 74): 0.657, (75, 84): 0.736, (85, 95): 0.765},  # Sharpe 0.120, 1348 trades
     "NBA_REB": {(55, 64): 0.574, (65, 74): 0.629, (75, 84): 0.701, (85, 95): 0.864},  # Sharpe 0.132, 860 trades
-    "NBA_AST": {(55, 64): 0.582, (65, 74): 0.644, (75, 84): 0.747, (85, 95): 0.827},  # Sharpe 0.126, 642 trades
+    # "NBA_AST": {(55, 64): 0.582, (65, 74): 0.644, (75, 84): 0.747, (85, 95): 0.827},  # DISABLED: -3.6% ROI realistic backtest
     "NHLFG":     {(55, 70): 0.550, (71, 90): 0.450},
     "NBASPREAD": {(55, 65): 0.480, (66, 75): 0.440, (76, 90): 0.380},
     "NBA2D":     {(55, 65): 0.520, (66, 79): 0.580},  # Cap at 79c — 80-89c has 0% NO win
@@ -222,10 +222,10 @@ SPORT_PARAMS = {
     # Backtest: all 4 profitable with 0 correlation to game winners (14K+ paired observations)
     # Mar 2026 validation: NO win rates 54-62% (edge stable/strengthening)
     # Using 0.25x fractional Kelly (higher variance than game winners)
-    "NBA_3PT": {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Best prop: Sharpe 0.239, 26% ROI, 6.3% max DD
-    "NBA_PTS": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # Highest volume: 1382 trades, 12.6% ROI, 10.3% max DD
-    "NBA_REB": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # Solid: 922 trades, 11.9% ROI, 12.2% max DD
-    "NBA_AST": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # Good: 695 trades, 10.9% ROI, 6.5% max DD
+    "NBA_3PT": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Best prop: Sharpe 0.239, 40.2% ROI, backtest $8.7K profit. Boosted Kelly.
+    "NBA_PTS": {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Top earner: 71.7% ROI, 175 trades, $9.9K profit. Boosted Kelly.
+    "NBA_REB": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # Solid: 37.5% WR, 17.6% ROI, $1K profit
+    # "NBA_AST": {"kelly_mult": 0.08, "mp": 0.04, "min_edge": 0.10},  # DISABLED: -3.6% ROI in realistic backtest (28 trades). Assists too volatile.
     "CPI":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
     # --- DROPPED (OOS decayed despite strong backtest) ---
     "NHLFG":     {"kelly_mult": 0.00, "max_position": 0.00, "min_edge": 0.99},  # Disabled
@@ -323,7 +323,7 @@ class RulesEvaluator:
 
         # Rule 3: YES must be above threshold
         # Many markets have edge starting at 55c (totals, esports, challenger tennis)
-        LOW_EDGE_SPORTS = ("WEATHER", "CPI", "NFLTD", "NFLTT", "NBA_3PT", "NBA_PTS", "NBA_REB", "NBA_AST")
+        LOW_EDGE_SPORTS = ("WEATHER", "CPI", "NFLTD", "NFLTT", "NBA_3PT", "NBA_PTS", "NBA_REB")
         min_price = Decimal("0.55") if sport in LOW_EDGE_SPORTS else MIN_YES_PRICE
         max_price = Decimal("0.90") if sport in LOW_EDGE_SPORTS else MAX_YES_PRICE
 

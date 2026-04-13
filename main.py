@@ -925,7 +925,7 @@ class EdgeRunner:
             "KXNBAPTS",                                # NBA Player Points — Buy NO on star Overs
             "KXNBA3PT",                                # NBA Three-Pointers — Best prop (Sharpe 0.239)
             "KXNBAREB",                                # NBA Rebounds
-            "KXNBAAST",                                # NBA Assists
+            # "KXNBAAST",                              # NBA Assists — DISABLED: -3.6% ROI in realistic backtest
         ]:
             cursor = None
             for _ in range(5):
