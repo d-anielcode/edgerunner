@@ -412,62 +412,105 @@ def api_settlements():
 @app.route("/api/daily-pnl")
 def api_daily_pnl():
     """
-    Daily P&L from SETTLEMENTS ONLY (the only trustworthy source).
+    ACCURATE daily balance reconstruction via backtracking.
 
-    For each settled market where we held NO:
-    - WIN (result=no): pnl = no_count * $1.00 - no_total_cost - fee
-    - LOSS (result=yes): pnl = -no_total_cost - fee
+    Starts from the current known balance, then works backwards through
+    every fill and settlement to reconstruct what the balance was each day.
 
-    The equity curve shows portfolio value = starting_balance + cumulative_settlement_pnl.
-    This excludes profit-take sell revenue (which inflates fill-based P&L)
-    but is the most accurate representation of actual money flow.
+    Key formula:
+    - Buy fill: cash OUT = price * count + fee
+    - Sell fill: cash IN = NO_price * count - fee (for sell YES closing NO)
+    - Settlement: cash IN = revenue field (in cents / 100)
     """
     try:
-        settlements = _filter_agent_settlements(
-            client.get_settlements(paginate_all=True)
-        )
+        fills = client.get_fills(paginate_all=True)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    # Compute per-settlement P&L and group by date
-    daily: dict[str, dict] = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
+    try:
+        settlements = client.get_settlements(paginate_all=True)
+    except Exception:
+        settlements = []
+
+    # Get current balance
+    try:
+        current_balance = client.get_balance()
+    except Exception:
+        current_balance = 0.0
+
+    # Build timeline of ALL cash-changing events
+    events = []
+
+    for f in fills:
+        action = f.get("action", "")
+        side = f.get("side", "")
+        count = float(f.get("count_fp", 0))
+        yes_p = float(f.get("yes_price_dollars", 0))
+        no_p = float(f.get("no_price_dollars", 0))
+        fee = float(f.get("fee_cost", 0))
+        ts = f.get("created_time", "")
+
+        if action == "buy":
+            price = no_p if side == "no" else yes_p
+            cash_change = -(price * count + fee)
+        elif action == "sell":
+            # Sell YES (closing NO) = get NO price value
+            # Sell NO (closing YES) = get YES price value
+            if side == "yes":
+                cash_change = no_p * count - fee
+            else:
+                cash_change = yes_p * count - fee
+        else:
+            cash_change = 0
+
+        events.append({"ts": ts, "cash": cash_change})
 
     for s in settlements:
-        result = s.get("market_result", s.get("result", ""))
-        no_cost = float(s.get("no_total_cost_dollars", 0))
-        no_count = float(s.get("no_count_fp", 0))
-        fee = float(s.get("fee_cost", 0))
+        revenue_cents = s.get("revenue", 0)
+        if revenue_cents > 0:
+            revenue = revenue_cents / 100.0
+            ts = s.get("settled_time", s.get("created_time", ""))
+            events.append({"ts": ts, "cash": revenue})
 
-        if no_cost == 0 and no_count == 0:
-            continue  # No NO position on this market
+    # Sort forward
+    events.sort(key=lambda e: e["ts"])
 
-        date = s.get("settled_time", s.get("created_time", ""))[:10]
+    # Backtrack: undo all events from current balance to find initial
+    balance = current_balance
+    for e in reversed(events):
+        balance -= e["cash"]
+    initial_balance = balance
 
-        if result == "no":
-            pnl = no_count * 1.0 - no_cost - fee
-        else:
-            pnl = -no_cost - fee
+    # Replay forward, recording daily end-of-day balance
+    balance = initial_balance
+    daily: dict[str, dict] = {}
+    daily_trades: dict[str, int] = defaultdict(int)
 
-        daily[date]["pnl"] += pnl
-        daily[date]["trades"] += 1
+    for e in events:
+        balance += e["cash"]
+        date = e["ts"][:10]
+        daily[date] = balance
+        daily_trades[date] += 1
 
-    # Build equity curve: starting balance + cumulative settlement P&L
-    sorted_dates = sorted(daily.keys())
-    starting_balance = TOTAL_DEPOSITS  # Approximate — deposits happened over time
-    cumulative = 0.0
+    # Filter to agent era and build result
     result_list = []
-    for d in sorted_dates:
-        pnl = round(daily[d]["pnl"], 2)
-        cumulative += pnl
+    prev_balance = TOTAL_DEPOSITS
+    for d in sorted(daily.keys()):
+        if d < AGENT_START_DATE:
+            prev_balance = daily[d]
+            continue
+        bal = round(daily[d], 2)
+        day_pnl = round(bal - prev_balance, 2)
         result_list.append(
             {
                 "date": d,
-                "pnl": pnl,
-                "cumulative": round(cumulative, 2),
-                "portfolio_value": round(starting_balance + cumulative, 2),
-                "trades": daily[d]["trades"],
+                "pnl": day_pnl,
+                "cumulative": round(bal - TOTAL_DEPOSITS, 2),
+                "portfolio_value": bal,
+                "trades": daily_trades.get(d, 0),
             }
         )
+        prev_balance = bal
 
     return jsonify(result_list)
 

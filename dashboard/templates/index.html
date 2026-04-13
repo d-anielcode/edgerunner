@@ -250,7 +250,7 @@
 
 <!-- Equity Curve -->
 <div class="chart-container">
-    <h2>Cumulative P&L (settlements only — does not include profit-take exits)</h2>
+    <h2>Portfolio Value (reconstructed from trade history)</h2>
     <canvas id="equityChart"></canvas>
 </div>
 
@@ -371,7 +371,7 @@
     function renderChart(data) {
         const ctx = document.getElementById('equityChart').getContext('2d');
         const labels = data.map(d => d.date);
-        const values = data.map(d => d.cumulative);
+        const values = data.map(d => d.portfolio_value);
 
         if (equityChart) equityChart.destroy();
 
