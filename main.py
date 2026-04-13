@@ -1224,24 +1224,27 @@ class EdgeRunner:
 
     async def _auto_shutdown_timer(self) -> None:
         """
-        Disabled — agent runs continuously. runner.py handles scheduling.
-        Re-discovers markets every 2 hours to pick up new games.
+        Runs continuously. Re-discovers markets every 30 minutes to pick up
+        new games as they're listed on Kalshi throughout the day.
         """
-        console.print("[blue]Auto-shutdown: DISABLED (24/7 mode). Market re-discovery every 2h.[/blue]")
+        console.print("[blue]Auto-shutdown: DISABLED (24/7 mode). Market re-discovery every 30min.[/blue]")
 
         # Wait for initial startup to complete
-        await asyncio.sleep(600)
+        await asyncio.sleep(300)  # 5 minutes (was 10)
 
         while self._running:
-            # Re-discover markets every hour to capture opening line value
-            # Gemini research: FLB is strongest when markets first open, before sharp money corrects
-            await asyncio.sleep(3600)
+            # Re-discover every 30 minutes — aggressive enough to catch new listings
+            await asyncio.sleep(1800)
             try:
                 # Track tickers before re-discovery to identify NEW markets
-                old_tickers = set(self._cache.get_all_orderbooks().keys())
+                old_tickers = set(DEFAULT_TRACKED_TICKERS)
+                old_count = len(old_tickers)
 
                 console.print("[blue]Re-discovering markets...[/blue]")
                 await self._discover_nba_markets()
+
+                new_count = len(DEFAULT_TRACKED_TICKERS)
+                new_tickers = set(DEFAULT_TRACKED_TICKERS) - old_tickers
 
                 # Clean up discovery prices for tickers no longer tracked
                 from data.discovery_cache import clear_old_prices, save_discovery_prices
@@ -1250,12 +1253,21 @@ class EdgeRunner:
                 )
                 save_discovery_prices(self._discovery_prices)
 
-                # Log new markets — market poller will fetch orderbooks on next cycle (~30s)
-                new_tickers = set(self._cache.get_all_orderbooks().keys()) - old_tickers
+                # Update feed and poller with new tickers
+                self._feed._tracked_tickers = DEFAULT_TRACKED_TICKERS
+                self._market_poller._tracked_tickers = DEFAULT_TRACKED_TICKERS
+
                 if new_tickers:
-                    console.print(f"[green]Opening Line Capture: {len(new_tickers)} new markets — poller will evaluate on next cycle[/green]")
+                    console.print(
+                        f"[green]Re-discovery: {len(new_tickers)} NEW markets found "
+                        f"(total {new_count}, was {old_count})[/green]"
+                    )
+                else:
+                    console.print(
+                        f"[blue]Re-discovery: no new markets (total {new_count})[/blue]"
+                    )
             except Exception as e:
-                console.print(f"[red]Market re-discovery error: {e} (will retry in 2h)[/red]")
+                console.print(f"[red]Market re-discovery error: {e} (will retry in 30min)[/red]")
 
             # Check if we've passed the last game's end time + buffer
             if shutdown_target and now >= shutdown_target:
