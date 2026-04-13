@@ -89,25 +89,25 @@ def _compute_ticker_pnl(fills: list[dict], settlement: dict | None) -> tuple:
             total_cost += cost
             buy_count += count
         elif action == "sell":
-            rev = (yes_price if side == "yes" else no_price) * count - fee
+            # Sell YES (closing NO position) = receive NO value
+            # Sell NO (closing YES position) = receive YES value
+            if side == "yes":
+                rev = no_price * count - fee
+            else:
+                rev = yes_price * count - fee
             total_revenue += rev
 
-    # Settlement revenue — use actual settlement data if available
+    # Settlement revenue — use the 'revenue' field (in cents)
     if settlement:
-        result = settlement.get("market_result", settlement.get("result", ""))
-        settle_no_count = float(settlement.get("no_count_fp", 0))
-        if result == "no" and settle_no_count > 0:
-            # We held NO and it won — each contract pays $1
-            total_revenue += settle_no_count * 1.0
-        # If we had cost data from settlement, prefer it over fill-derived cost
+        revenue_cents = settlement.get("revenue", 0)
+        if revenue_cents > 0:
+            total_revenue += revenue_cents / 100.0
+
+        # If we had cost data from settlement but no fills (paginated away)
         settle_cost = float(settlement.get("no_total_cost_dollars", 0))
         if settle_cost > 0 and total_cost == 0:
-            # Fills were paginated away but settlement has the cost
             total_cost = settle_cost + float(settlement.get("fee_cost", 0))
-            buy_count = settle_no_count
-    elif not settlement:
-        # No settlement — check old-style settlement_result string
-        pass
+            buy_count = float(settlement.get("no_count_fp", 0))
 
     return total_cost, total_revenue, buy_count
 
@@ -401,7 +401,8 @@ def api_fills():
                 buys.append({"count": count, "no_price": round(no_price, 4),
                              "yes_price": round(yes_price, 4), "cost": round(cost, 2), "time": fill_time})
             elif action == "sell":
-                rev = (yes_price if side == "yes" else no_price) * count - fee
+                # Sell YES (closing NO) = receive NO value, Sell NO (closing YES) = receive YES value
+                rev = (no_price if side == "yes" else yes_price) * count - fee
                 sells.append({"count": count, "yes_price": round(yes_price, 4),
                               "no_price": round(no_price, 4), "revenue": round(rev, 2), "time": fill_time})
 
