@@ -78,6 +78,12 @@ SPORT_PROFIT_TAKE = {
     "LIGUE1": 1.00,    # 100% — French soccer
     "LOL": 1.00,       # 100% — League of Legends esports
     "ATPCH": 0.50,     # 50% — ATP Challenger, take profits fast
+    # Player props — hold to settlement by default (binary prop outcomes)
+    # Props have higher variance so profit-take is less reliable
+    "NBA_3PT": 2.00,   # 200% — high variance, let winners run
+    "NBA_PTS": 1.50,   # 150% — moderate
+    "NBA_REB": 1.50,   # 150% — moderate
+    "NBA_AST": 1.50,   # 150% — moderate
 }
 AUTO_PROFIT_TAKE_PCT: float = 1.50  # Fallback for sports not in SPORT_PROFIT_TAKE
 

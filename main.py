@@ -922,6 +922,10 @@ class EdgeRunner:
             # "KXNHLFIRSTGOAL",                         # NHL First Goal — dropped: OOS decayed (62% YES vs 45% predicted)
             # "KXNBA2D",                               # NBA Double-Double — dropped: -7% ROI after recalibration
             "KXNFLSPREAD",                             # NFL Spreads
+            "KXNBAPTS",                                # NBA Player Points — Buy NO on star Overs
+            "KXNBA3PT",                                # NBA Three-Pointers — Best prop (Sharpe 0.239)
+            "KXNBAREB",                                # NBA Rebounds
+            "KXNBAAST",                                # NBA Assists
         ]:
             cursor = None
             for _ in range(5):

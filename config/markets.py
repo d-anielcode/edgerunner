@@ -250,6 +250,15 @@ def get_sport(ticker: str) -> str | None:
         return "NBA2D"
     if "KXNFLSPREAD" in upper:
         return "NFLSPREAD"
+    # Player props — must be before NBA fallback
+    if "KXNBAPTS" in upper:
+        return "NBA_PTS"
+    if "KXNBA3PT" in upper:
+        return "NBA_3PT"
+    if "KXNBAREB" in upper:
+        return "NBA_REB"
+    if "KXNBAAST" in upper:
+        return "NBA_AST"
     # Fallback to prefix matching
     if upper.startswith(KALSHI_NBA_PREFIX):
         return "NBA"
