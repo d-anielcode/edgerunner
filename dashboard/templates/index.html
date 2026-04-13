@@ -248,10 +248,14 @@
     </div>
 </div>
 
-<!-- Equity Curve -->
+<!-- Equity Curves -->
 <div class="chart-container">
-    <h2>Portfolio Value (reconstructed from trade history)</h2>
+    <h2>Daily Portfolio Value</h2>
     <canvas id="equityChart"></canvas>
+</div>
+<div class="chart-container">
+    <h2>Per-Trade Portfolio Value (every transaction)</h2>
+    <canvas id="tradeChart"></canvas>
 </div>
 
 <!-- Today's Trades -->
@@ -388,11 +392,14 @@
     // Chart
     // ---------------------------------------------------------------
     let equityChart = null;
+    let tradeChart = null;
 
     function renderChart(data) {
         const ctx = document.getElementById('equityChart').getContext('2d');
         const labels = data.map(d => d.date);
         const values = data.map(d => d.portfolio_value);
+        const lastVal = values.length > 0 ? values[values.length - 1] : 0;
+        const lineColor = lastVal >= TOTAL_DEPOSITS ? '#00ff88' : '#ff4444';
 
         if (equityChart) equityChart.destroy();
 
@@ -401,13 +408,13 @@
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Cumulative P&L ($)',
+                    label: 'Portfolio Value ($)',
                     data: values,
-                    borderColor: values.length > 0 && values[values.length - 1] >= 0 ? '#00ff88' : '#ff4444',
-                    backgroundColor: 'rgba(0, 255, 136, 0.05)',
+                    borderColor: lineColor,
+                    backgroundColor: lineColor === '#00ff88' ? 'rgba(0,255,136,0.05)' : 'rgba(255,68,68,0.05)',
                     fill: true,
                     tension: 0.3,
-                    pointRadius: 3,
+                    pointRadius: 4,
                     pointBackgroundColor: '#fff',
                     borderWidth: 2,
                 }]
@@ -419,23 +426,75 @@
                     legend: { display: false },
                     tooltip: {
                         callbacks: {
-                            label: (ctx) => `P&L: ${fmt$(ctx.parsed.y)}  |  Trades: ${data[ctx.dataIndex].trades}`
+                            label: (ctx) => `Balance: ${fmt$(ctx.parsed.y)}  |  Day P&L: ${fmt$(data[ctx.dataIndex].pnl)}`
                         }
                     }
                 },
                 scales: {
-                    x: {
-                        ticks: { color: '#666', maxRotation: 45 },
-                        grid: { color: '#1e2d4a' }
-                    },
-                    y: {
-                        ticks: { color: '#666', callback: v => fmt$(v) },
-                        grid: { color: '#1e2d4a' }
-                    }
+                    x: { ticks: { color: '#666', maxRotation: 45 }, grid: { color: '#1e2d4a' } },
+                    y: { ticks: { color: '#666', callback: v => fmt$(v) }, grid: { color: '#1e2d4a' } }
                 }
             }
         });
     }
+
+    function renderTradeChart(timeline) {
+        const ctx = document.getElementById('tradeChart').getContext('2d');
+        // Use short time labels, show balance after each event
+        const labels = timeline.map((t, i) => {
+            // Show date on first event of each day, otherwise just index
+            if (i === 0 || timeline[i-1].time.slice(0, 10) !== t.time.slice(0, 10)) {
+                return t.time.slice(5, 10);  // MM-DD
+            }
+            return '';
+        });
+        const values = timeline.map(t => t.balance);
+        // Color each point: green if cash_change > 0, red if < 0
+        const pointColors = timeline.map(t => t.cash_change >= 0 ? '#00ff88' : '#ff4444');
+        const lastVal = values.length > 0 ? values[values.length - 1] : 0;
+
+        if (tradeChart) tradeChart.destroy();
+
+        tradeChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Balance ($)',
+                    data: values,
+                    borderColor: '#8892b0',
+                    backgroundColor: 'rgba(136,146,176,0.05)',
+                    fill: true,
+                    tension: 0.1,
+                    pointRadius: 2,
+                    pointBackgroundColor: pointColors,
+                    borderWidth: 1.5,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => timeline[items[0].dataIndex].time.replace('T', ' '),
+                            label: (ctx) => {
+                                const t = timeline[ctx.dataIndex];
+                                return `Balance: ${fmt$(t.balance)}  |  ${t.desc}  |  ${t.cash_change >= 0 ? '+' : ''}${fmt$(t.cash_change)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { color: '#666', maxTicksLimit: 15 }, grid: { color: '#1e2d4a' } },
+                    y: { ticks: { color: '#666', callback: v => fmt$(v) }, grid: { color: '#1e2d4a' } }
+                }
+            }
+        });
+    }
+
+    const TOTAL_DEPOSITS = 410;
 
     // ---------------------------------------------------------------
     // Data loaders
@@ -597,7 +656,16 @@
             const data = await res.json();
             renderChart(data);
         } catch (e) {
-            console.error('Chart error:', e);
+            console.error('Daily chart error:', e);
+        }
+        try {
+            const res2 = await fetch('/api/trade-timeline');
+            const timeline = await res2.json();
+            // Reverse so it's chronological (API returns newest first)
+            timeline.reverse();
+            renderTradeChart(timeline);
+        } catch (e) {
+            console.error('Trade chart error:', e);
         }
     }
 
