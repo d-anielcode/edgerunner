@@ -6,31 +6,82 @@
     <title>EdgeRunner Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
+        /* ------------------------------------------------------------------ */
+        /* Google Fonts                                                         */
+        /* ------------------------------------------------------------------ */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        /* ------------------------------------------------------------------ */
+        /* Reset                                                                */
+        /* ------------------------------------------------------------------ */
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        body {
-            background: #1a1a2e;
-            color: #e0e0e0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            padding: 20px;
-            min-height: 100vh;
+        /* ------------------------------------------------------------------ */
+        /* Design tokens                                                        */
+        /* ------------------------------------------------------------------ */
+        :root {
+            --bg:           #0a0e17;
+            --surface:      #111827;
+            --surface-hover:#1a2332;
+            --border:       #1e2d4a;
+            --text-primary: #e2e8f0;
+            --text-secondary:#8892b0;
+            --text-label:   #64748b;
+            --green:        #10b981;
+            --red:          #ef4444;
+            --amber:        #f59e0b;
+            --blue:         #3b82f6;
+            --blue-hover:   #2563eb;
+            --sport-bg:     #1e3a5f;
+            --sport-text:   #60a5fa;
+            --font-sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --font-mono:    'JetBrains Mono', 'Fira Code', monospace;
         }
 
+        /* ------------------------------------------------------------------ */
+        /* Base                                                                 */
+        /* ------------------------------------------------------------------ */
+        body {
+            background: var(--bg);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: 14px;
+            line-height: 1.5;
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Container                                                            */
+        /* ------------------------------------------------------------------ */
+        body > * {
+            max-width: 1400px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Header                                                               */
+        /* ------------------------------------------------------------------ */
         .header {
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            justify-content: space-between;
             margin-bottom: 24px;
+            max-width: 1400px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .header h1 {
             font-size: 24px;
             font-weight: 700;
-            color: #ffffff;
+            color: var(--text-primary);
+            letter-spacing: -0.3px;
         }
 
         .header .mode-badge {
-            padding: 4px 14px;
+            padding: 4px 12px;
             border-radius: 12px;
             font-size: 12px;
             font-weight: 600;
@@ -38,178 +89,266 @@
             letter-spacing: 1px;
         }
 
-        .mode-live { background: #ff4444; color: #fff; }
-        .mode-paper { background: #444; color: #aaa; }
+        .mode-live   { background: var(--green); color: #fff; }
+        .mode-paper  { background: rgba(100,116,139,0.25); color: var(--text-secondary); }
 
         .refresh-info {
-            font-size: 11px;
-            color: #666;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-left: 12px;
         }
 
-        /* Stat Cards */
+        /* ------------------------------------------------------------------ */
+        /* Stat Cards                                                           */
+        /* ------------------------------------------------------------------ */
         .stats-row {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
             gap: 16px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
+            max-width: 1400px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .stat-card {
-            background: #16213e;
-            border-radius: 10px;
-            padding: 18px 20px;
-            border: 1px solid #1e2d4a;
+            background: var(--surface);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 20px 24px;
+            transition: background-color 150ms ease;
+        }
+
+        .stat-card:hover {
+            background: var(--surface-hover);
         }
 
         .stat-card .label {
             font-size: 11px;
             text-transform: uppercase;
-            color: #8899aa;
-            letter-spacing: 0.5px;
-            margin-bottom: 6px;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
         }
 
         .stat-card .value {
-            font-size: 26px;
+            font-family: var(--font-mono);
+            font-size: 28px;
             font-weight: 700;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            color: var(--text-primary);
+            line-height: 1.1;
         }
 
-        .stat-card .value.green { color: #00ff88; }
-        .stat-card .value.red { color: #ff4444; }
-        .stat-card .value.neutral { color: #ffffff; }
+        .stat-card .value.green   { color: var(--green); }
+        .stat-card .value.red     { color: var(--red); }
+        .stat-card .value.neutral { color: var(--text-primary); }
 
-        /* Chart */
+        /* ------------------------------------------------------------------ */
+        /* Charts                                                               */
+        /* ------------------------------------------------------------------ */
         .chart-container {
-            background: #16213e;
-            border-radius: 10px;
+            background: var(--surface);
+            border-radius: 12px;
+            border: 1px solid var(--border);
             padding: 20px;
-            margin-bottom: 24px;
-            border: 1px solid #1e2d4a;
+            margin-bottom: 20px;
+            max-width: 1400px;
+            margin-left: auto;
+            margin-right: auto;
+            transition: background-color 150ms ease;
         }
 
         .chart-container h2 {
-            font-size: 16px;
-            margin-bottom: 12px;
-            color: #ccc;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
         }
 
         .chart-container canvas {
-            max-height: 300px;
+            max-height: 280px;
         }
 
-        /* Tables */
+        /* ------------------------------------------------------------------ */
+        /* Tables                                                               */
+        /* ------------------------------------------------------------------ */
         .table-section {
-            background: #16213e;
-            border-radius: 10px;
+            background: var(--surface);
+            border-radius: 12px;
+            border: 1px solid var(--border);
             padding: 20px;
-            margin-bottom: 24px;
-            border: 1px solid #1e2d4a;
+            margin-bottom: 20px;
             overflow-x: auto;
+            max-width: 1400px;
+            margin-left: auto;
+            margin-right: auto;
+            transition: background-color 150ms ease;
         }
 
         .table-section h2 {
-            font-size: 16px;
-            margin-bottom: 12px;
-            color: #ccc;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
         }
 
         table {
             width: 100%;
-            border-collapse: collapse;
+            border-collapse: separate;
+            border-spacing: 0;
             font-size: 13px;
+        }
+
+        thead {
+            position: sticky;
+            top: 0;
+            z-index: 1;
         }
 
         th {
             text-align: left;
-            padding: 8px 12px;
-            border-bottom: 1px solid #2a3a5a;
-            color: #8899aa;
+            padding: 12px;
+            background: var(--surface);
+            border-bottom: 2px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 11px;
             font-weight: 600;
             text-transform: uppercase;
-            font-size: 11px;
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
             white-space: nowrap;
         }
 
         td {
-            padding: 8px 12px;
-            border-bottom: 1px solid #1e2d4a;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12px;
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-family: var(--font-mono);
+            font-size: 13px;
             white-space: nowrap;
+            color: var(--text-primary);
+            transition: background-color 150ms ease;
         }
 
-        tr:hover { background: #1a2844; }
+        /* Alternating row tint */
+        tbody tr:nth-child(even) td {
+            background: rgba(255, 255, 255, 0.02);
+        }
 
-        .pnl-positive { color: #00ff88; }
-        .pnl-negative { color: #ff4444; }
-        .pnl-flat { color: #888; }
+        tbody tr:hover td {
+            background: rgba(59, 130, 246, 0.05);
+        }
 
+        /* ------------------------------------------------------------------ */
+        /* P&L colors                                                          */
+        /* ------------------------------------------------------------------ */
+        .pnl-positive { color: var(--green); }
+        .pnl-negative { color: var(--red); }
+        .pnl-flat     { color: var(--text-label); }
+
+        /* ------------------------------------------------------------------ */
+        /* Status badges                                                        */
+        /* ------------------------------------------------------------------ */
         .badge {
+            display: inline-block;
             padding: 2px 8px;
             border-radius: 4px;
             font-size: 11px;
             font-weight: 600;
+            font-family: var(--font-sans);
+            letter-spacing: 0.5px;
         }
 
-        .badge-win { background: rgba(0, 255, 136, 0.15); color: #00ff88; }
-        .badge-loss { background: rgba(255, 68, 68, 0.15); color: #ff4444; }
-        .badge-flat { background: rgba(136, 136, 136, 0.15); color: #888; }
+        .badge-win  { background: rgba(16, 185, 129, 0.20); color: var(--green); }
+        .badge-loss { background: rgba(239,  68,  68, 0.20); color: var(--red); }
+        .badge-flat { background: rgba(100, 116, 139, 0.20); color: var(--text-label); }
 
+        /* ------------------------------------------------------------------ */
+        /* Sport tag                                                            */
+        /* ------------------------------------------------------------------ */
         .sport-tag {
-            background: #2a3a5a;
-            color: #aabbcc;
+            display: inline-block;
+            background: var(--sport-bg);
+            color: var(--sport-text);
             padding: 2px 8px;
             border-radius: 4px;
             font-size: 11px;
+            font-weight: 500;
+            font-family: var(--font-sans);
         }
 
-        /* Two-column layout for bottom tables */
+        /* ------------------------------------------------------------------ */
+        /* Two-column layout                                                    */
+        /* ------------------------------------------------------------------ */
         .two-col {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 24px;
+            gap: 20px;
+            max-width: 1400px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
-        /* Weekly summary */
+        /* Table sections inside .two-col should not re-apply max-width */
+        .two-col .table-section {
+            max-width: none;
+            margin-left: 0;
+            margin-right: 0;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Account Summary grid                                                 */
+        /* ------------------------------------------------------------------ */
         .summary-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            text-align: center;
         }
 
         .summary-item {
-            text-align: center;
             padding: 12px;
         }
 
         .summary-item .num {
-            font-size: 22px;
-            font-weight: 700;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-family: var(--font-mono);
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
         }
+
+        .summary-item .num.green   { color: var(--green); }
+        .summary-item .num.red     { color: var(--red); }
+        .summary-item .num.neutral { color: var(--text-primary); }
 
         .summary-item .desc {
             font-size: 11px;
-            color: #8899aa;
-            margin-top: 4px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
         }
 
+        /* ------------------------------------------------------------------ */
+        /* Loading state                                                        */
+        /* ------------------------------------------------------------------ */
         .loading {
-            color: #666;
+            color: var(--text-label);
             font-style: italic;
             padding: 20px;
             text-align: center;
+            font-family: var(--font-sans);
         }
 
-        @media (max-width: 1100px) {
-            .stats-row { grid-template-columns: repeat(3, 1fr); }
-            .two-col { grid-template-columns: 1fr; }
+        /* ------------------------------------------------------------------ */
+        /* Responsive                                                           */
+        /* ------------------------------------------------------------------ */
+        @media (max-width: 768px) {
+            .stats-row    { grid-template-columns: repeat(2, 1fr); }
+            .summary-grid { grid-template-columns: repeat(2, 1fr); }
+            .two-col      { grid-template-columns: 1fr; }
         }
 
-        @media (max-width: 700px) {
-            .stats-row { grid-template-columns: repeat(2, 1fr); }
+        @media (max-width: 480px) {
+            .stats-row { grid-template-columns: 1fr; }
         }
     </style>
 </head>
