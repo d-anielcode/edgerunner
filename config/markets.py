@@ -81,6 +81,9 @@ SUPPORTED_SPORT_PREFIXES: list[str] = [
     "KXHIGH", "CPI", "CPICORE", "CPICOREYOY",
     "KXNFLANYTD",
     "KXNHLSPREAD", "KXNHLFIRSTGOAL", "KXNBASPREAD", "KXNBA2D", "KXNFLSPREAD",
+    "KXNFLFIRSTTD", "KXNHLGOAL", "KXNHLAST", "KXNHLPTS", "KXNBASTL",
+    "KXNFLRECYDS", "KXNCAAFTOTAL", "KXCS", "KXMLSGAME", "KXEUROLEAGUEGAME",
+    "KXLOLGAME", "KXDARTSMATCH", "KXEREDIVISIEGAME",
 ]
 
 # Game winner ticker patterns we actively trade (fade favorites)
@@ -100,6 +103,9 @@ GAME_WINNER_PATTERNS: list[str] = [
     "KXNBASPREAD", "KXNBA2D",
     "KXNFLSPREAD",
     "KXHIGHAUS", "KXHIGHPHIL",
+    "KXNFLFIRSTTD", "KXNHLGOAL", "KXNHLAST", "KXNHLPTS", "KXNBASTL",
+    "KXNFLRECYDS", "KXNCAAFTOTAL", "KXCS", "KXMLSGAME", "KXEUROLEAGUEGAME",
+    "KXLOLGAME", "KXDARTSMATCH", "KXEREDIVISIEGAME",
 ]
 
 # Regex patterns for matching tickers to categories.
@@ -250,6 +256,33 @@ def get_sport(ticker: str) -> str | None:
         return "NBA2D"
     if "KXNFLSPREAD" in upper:
         return "NFLSPREAD"
+    # New markets — must be before NBA/NHL fallback
+    if "KXNFLFIRSTTD" in upper:
+        return "NFL_1ST_TD"
+    if "KXNHLGOAL" in upper:
+        return "NHL_GOAL"
+    if "KXNHLAST" in upper:
+        return "NHL_AST"
+    if "KXNHLPTS" in upper:
+        return "NHL_PTS"
+    if "KXNBASTL" in upper:
+        return "NBA_STL"
+    if "KXNFLRECYDS" in upper:
+        return "NFL_REC_YDS"
+    if "KXNCAAFTOTAL" in upper:
+        return "NCAAF_TOTAL"
+    if "KXCS" in upper and "KXCSGO" not in upper:
+        return "CS2"
+    if "KXMLSGAME" in upper:
+        return "MLS"
+    if "KXEUROLEAGUEGAME" in upper:
+        return "EUROLEAGUE"
+    if "KXLOLGAME" in upper:
+        return "LOL_GAME"
+    if "KXDARTSMATCH" in upper:
+        return "DARTS"
+    if "KXEREDIVISIEGAME" in upper:
+        return "EREDIVISIE"
     # Player props — must be before NBA fallback
     if "KXNBAPTS" in upper:
         return "NBA_PTS"

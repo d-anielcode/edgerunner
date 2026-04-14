@@ -143,13 +143,12 @@ EDGE_TABLES = {
     # "UFC": EDGE_TABLE_UFC,  # DISABLED: 0% WR realistic backtest
     "NCAAMB": EDGE_TABLE_NCAAMB,
     # "NCAAWB": EDGE_TABLE_NCAAWB,  # DISABLED: -19.7% ROI realistic backtest
-    # DISABLED: -10% ROI
-    # "WTA": EDGE_TABLE_WTA,
+    "WTA": EDGE_TABLE_WTA,  # RE-ENABLED: profitable with dynamic PT
     "MLB": EDGE_TABLE_MLB,
     # New markets from risk-adjusted optimization (all STRONG ADD)
     # DISABLED: No backtest validation or OOS data for these markets.
     # "MLBTOTAL": {(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},  # Over/under runs, 82% WR w/ 100% PT
-    # "NFLGW":    {(55, 65): 0.520, (66, 75): 0.580, (76, 90): 0.650},  # DISABLED: negative Sharpe (-0.020) in realistic backtest, 192 trades
+    "NFLGW":    {(55, 65): 0.520, (66, 75): 0.580, (76, 90): 0.650},  # RE-ENABLED from comprehensive backtest
     "NFLTT":    {(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},  # NFL team totals, 60% WR w/ 150% PT
     # "CBA":      {(55, 65): 0.500, (66, 75): 0.550, (76, 85): 0.620},  # Chinese basketball, 63% WR w/ 100% PT
     # "LIGUE1":   {(55, 65): 0.480, (66, 75): 0.500, (76, 85): 0.550},  # French soccer, 62% WR w/ 100% PT
@@ -170,7 +169,21 @@ EDGE_TABLES = {
     "NBA_3PT": {(55, 64): 0.497, (65, 74): 0.594, (75, 84): 0.707, (85, 95): 0.771},  # Sharpe 0.239, 644 trades
     "NBA_PTS": {(55, 64): 0.538, (65, 74): 0.657, (75, 84): 0.736, (85, 95): 0.765},  # Sharpe 0.120, 1348 trades
     "NBA_REB": {(55, 64): 0.574, (65, 74): 0.629, (75, 84): 0.701, (85, 95): 0.864},  # Sharpe 0.132, 860 trades
-    # "NBA_AST": {(55, 64): 0.582, (65, 74): 0.644, (75, 84): 0.747, (85, 95): 0.827},  # DISABLED: -3.6% ROI realistic backtest
+    "NBA_AST": {(55, 64): 0.582, (65, 74): 0.644, (75, 84): 0.747, (85, 95): 0.827},  # RE-ENABLED from comprehensive backtest
+    # --- NEW MARKETS (from comprehensive backtest optimization) ---
+    "NFL_1ST_TD": {(55, 95): 0.000},  # 100% NO win rate
+    "NHL_GOAL":   {(85, 95): 0.410},
+    "NHL_AST":    {(55, 65): 0.412, (66, 75): 0.308},
+    "NHL_PTS":    {(55, 65): 0.497, (66, 75): 0.585, (76, 85): 0.714, (85, 95): 0.850},
+    "NBA_STL":    {(55, 65): 0.563, (66, 75): 0.435, (85, 95): 0.200},
+    "NFL_REC_YDS":{(55, 65): 0.430, (66, 75): 0.584, (76, 85): 0.640, (85, 95): 0.748},
+    "NCAAF_TOTAL":{(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},
+    "CS2":        {(55, 65): 0.548, (66, 75): 0.630, (76, 85): 0.694, (85, 95): 0.704},
+    "MLS":        {(55, 65): 0.543, (66, 75): 0.622, (76, 85): 0.633},
+    "EUROLEAGUE": {(55, 65): 0.530, (66, 75): 0.580, (76, 85): 0.700},
+    "LOL_GAME":   {(55, 65): 0.520, (66, 75): 0.560, (76, 85): 0.620},
+    "DARTS":      {(55, 65): 0.400, (76, 85): 0.522},
+    "EREDIVISIE": {(55, 65): 0.429, (66, 75): 0.500, (76, 85): 0.500},
     "NHLFG":     {(55, 70): 0.550, (71, 90): 0.450},
     "NBASPREAD": {(55, 65): 0.480, (66, 75): 0.440, (76, 90): 0.380},
     "NBA2D":     {(55, 65): 0.520, (66, 79): 0.580},  # Cap at 79c — 80-89c has 0% NO win
@@ -206,11 +219,11 @@ SPORT_PARAMS = {
     "WNBA":   {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.10},  # Raised: break-even ~10.5%
     # "UFC":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # DISABLED: 0% WR in realistic backtest (5 trades, -98% ROI)
     # "NCAAWB": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # DISABLED: -19.7% ROI in realistic backtest (18 trades, 16.7% WR)
-    # "WTA":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: -10% ROI in research; RE-ENABLED comment was wrong
+    "WTA":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # RE-ENABLED from comprehensive backtest
     "MLB":    {"kelly_mult": 0.06, "max_position": 0.03, "min_edge": 0.12},  # 50% PT at 76-84c. Conservative.
     # --- NEW: Risk-adjusted optimization (all STRONG ADD, Sharpe > 0.2, MaxDD < $4) ---
     # "MLBTOTAL":{"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.05},  # DISABLED: No FLB research for over/under totals
-    # "NFLGW":   {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # DISABLED: negative Sharpe (-0.020) in realistic backtest
+    "NFLGW":   {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # RE-ENABLED from comprehensive backtest
     "NFLTT":   {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # NFL team totals, 0.270 Sharpe, $2.9 DD — Raised: break-even ~10.5%
     # "CBA":     {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.08},  # DISABLED: Chinese basketball, no backtest validation
     # "LIGUE1":  {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.08},  # DISABLED: French soccer, no OOS data
@@ -225,8 +238,22 @@ SPORT_PARAMS = {
     "NBA_3PT": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Best prop: Sharpe 0.239, 40.2% ROI, backtest $8.7K profit. Boosted Kelly.
     "NBA_PTS": {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Top earner: 71.7% ROI, 175 trades, $9.9K profit. Boosted Kelly.
     "NBA_REB": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # Solid: 37.5% WR, 17.6% ROI, $1K profit
-    # "NBA_AST": {"kelly_mult": 0.08, "mp": 0.04, "min_edge": 0.10},  # DISABLED: -3.6% ROI in realistic backtest (28 trades). Assists too volatile.
+    "NBA_AST": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # RE-ENABLED from comprehensive backtest
     "CPI":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
+    # --- NEW MARKETS (backtest-validated, Sharpe > 0.05) ---
+    "NFL_1ST_TD": {"kelly_mult": 0.25, "max_position": 0.12, "min_edge": 0.05},  # Sharpe 7.21, extreme longshot bias
+    "NHL_GOAL":   {"kelly_mult": 0.20, "max_position": 0.10, "min_edge": 0.08},  # Sharpe 0.98, player goals
+    "NHL_AST":    {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.08},  # Sharpe 0.41
+    "NHL_PTS":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Sharpe 0.15
+    "NBA_STL":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Sharpe 0.27
+    "NFL_REC_YDS":{"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.08},  # Sharpe 0.27, 1435 trades
+    "NCAAF_TOTAL":{"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # Sharpe 0.06, 1698 trades
+    "CS2":        {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Sharpe 0.14
+    "MLS":        {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Sharpe 0.13
+    "EUROLEAGUE": {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Sharpe 0.11
+    "LOL_GAME":   {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # Sharpe 0.06
+    "DARTS":      {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Sharpe 0.22
+    "EREDIVISIE": {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Sharpe 0.33
     # --- DROPPED (OOS decayed despite strong backtest) ---
     "NHLFG":     {"kelly_mult": 0.00, "max_position": 0.00, "min_edge": 0.99},  # Disabled
     "NBA2D":     {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},
@@ -323,7 +350,10 @@ class RulesEvaluator:
 
         # Rule 3: YES must be above threshold
         # Many markets have edge starting at 55c (totals, esports, challenger tennis)
-        LOW_EDGE_SPORTS = ("WEATHER", "CPI", "NFLTD", "NFLTT", "NBA_3PT", "NBA_PTS", "NBA_REB")
+        LOW_EDGE_SPORTS = ("WEATHER", "CPI", "NFLTD", "NFLTT", "NBA_3PT", "NBA_PTS", "NBA_REB",
+                           "NFL_1ST_TD", "NHL_GOAL", "NHL_AST", "NHL_PTS", "NBA_STL",
+                           "NFL_REC_YDS", "NCAAF_TOTAL", "CS2", "MLS", "EUROLEAGUE",
+                           "LOL_GAME", "DARTS", "EREDIVISIE", "NBA_AST", "NCAAMB")
         min_price = Decimal("0.55") if sport in LOW_EDGE_SPORTS else MIN_YES_PRICE
         max_price = Decimal("0.90") if sport in LOW_EDGE_SPORTS else MAX_YES_PRICE
 
@@ -457,10 +487,28 @@ class RulesEvaluator:
         # (0.33x was too conservative for high-conviction 76-90c trades)
         kelly_mult = params["kelly_mult"] * 0.50
         max_pos = params["max_position"] * 0.50
-        kelly_fraction = max(0.0, min(kelly_raw * kelly_mult, max_pos))
 
         # === SITUATIONAL KELLY MODIFIERS (data-backed) ===
         modifiers = []
+
+        # Dynamic Kelly: scale by entry NO price
+        # Cheap entries (5-15c NO) have highest Sharpe — bet more
+        # Expensive entries (36-45c NO) have near-zero Sharpe — bet less
+        entry_no_cents = 100 - int(float(yes_price) * 100)
+        if entry_no_cents <= 15:
+            kelly_mult *= 1.3
+            max_pos *= 1.3
+            modifiers.append("cheap_1.3x")
+        elif entry_no_cents <= 25:
+            kelly_mult *= 1.1
+            max_pos *= 1.1
+            modifiers.append("mid_1.1x")
+        elif entry_no_cents >= 36:
+            kelly_mult *= 0.6
+            max_pos *= 0.6
+            modifiers.append("exp_0.6x")
+
+        kelly_fraction = max(0.0, min(kelly_raw * kelly_mult, max_pos))
 
         # Modifier 1: Away favorite boost (+47.8% ROI vs +18.3% for home)
         # Ticker format: KXNBAGAME-26APR07SACGSW-GSW → game_id=SACGSW, team=GSW

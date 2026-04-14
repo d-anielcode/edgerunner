@@ -921,12 +921,12 @@ class EdgeRunner:
             "KXUFCFIGHT",                              # UFC/MMA
             "KXNCAAMBGAME",                            # NCAA Men's Basketball
             "KXNCAAWBGAME",                            # NCAA Women's Basketball
-            # "KXWTAMATCH",                            # WTA Tennis — disabled: no SPORT_PARAMS entry, wastes API calls
+            "KXWTAMATCH",                              # WTA Tennis — RE-ENABLED from comprehensive backtest
             "KXATPMATCH",                              # ATP Tennis — year-round, strong FLB 71-85c, +2.5% retirement premium
             "KXCFBGAME",                               # College Football — Sep-Jan, strong FLB at 90c+, conservative until validated
-            # "KXMLBGAME",                             # MLB Game Winners — disabled: no SPORT_PARAMS entry; very few qualifying trades
+            "KXMLBGAME",                               # MLB Game Winners — RE-ENABLED
             # "KXMLBTOTAL",                            # MLB Totals — disabled: no SPORT_PARAMS entry; wastes orderbook polling
-            # "KXNFLGAME",                             # NFL Game Winners — disabled: off-season; no SPORT_PARAMS entry (NFLGW disabled)
+            "KXNFLGAME",                               # NFL Game Winners — RE-ENABLED from comprehensive backtest
             # "KXNFLTEAMTOTAL",                        # NFL Team Totals — disabled: +16% ROI after slippage (below 20% threshold)
             # "KXCBAGAME",                             # CBA (Chinese Basketball) — disabled: no SPORT_PARAMS entry, wastes API calls
             # "KXLIGUE",                               # Ligue 1 — disabled: +4% ROI after slippage (below 20% threshold)
@@ -947,7 +947,20 @@ class EdgeRunner:
             "KXNBAPTS",                                # NBA Player Points — Buy NO on star Overs
             "KXNBA3PT",                                # NBA Three-Pointers — Best prop (Sharpe 0.239)
             "KXNBAREB",                                # NBA Rebounds
-            # "KXNBAAST",                              # NBA Assists — DISABLED: -3.6% ROI in realistic backtest
+            "KXNBAAST",                                # NBA Assists — RE-ENABLED from comprehensive backtest
+            "KXNFLFIRSTTD",                            # NFL First TD — Sharpe 7.21
+            "KXNHLGOAL",                               # NHL Player Goals — Sharpe 0.98
+            "KXNHLAST",                                # NHL Player Assists — Sharpe 0.41
+            "KXNHLPTS",                                # NHL Player Points — Sharpe 0.15
+            "KXNBASTL",                                # NBA Player Steals — Sharpe 0.27
+            "KXNFLRECYDS",                             # NFL Receiving Yards — Sharpe 0.27, 1435 trades
+            "KXNCAAFTOTAL",                            # College Football Totals — 1698 trades
+            "KXCS",                                    # Counter-Strike 2 — Sharpe 0.14
+            "KXMLSGAME",                               # MLS Soccer — Sharpe 0.13
+            "KXEUROLEAGUEGAME",                        # EuroLeague Basketball — Sharpe 0.11
+            "KXLOLGAME",                               # League of Legends game winner — Sharpe 0.06
+            "KXDARTSMATCH",                            # Darts — Sharpe 0.22
+            "KXEREDIVISIEGAME",                        # Eredivisie (Dutch soccer) — Sharpe 0.33
         ]:
             cursor = None
             for _ in range(5):

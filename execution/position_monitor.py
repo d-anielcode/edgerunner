@@ -52,40 +52,60 @@ BREAKEVEN_LOCK_PCT: float = 0.50  # Up 50% → never let it become a loss
 # Bankroll-based stop
 BANKROLL_LOSS_THRESHOLD: float = 0.02  # 2% of bankroll loss triggers review
 
-# Sport-specific profit-take thresholds (from primary backtest optimization grid)
-# Each sport has its own optimal PT% based on trajectory analysis of 6,636 markets
-SPORT_PROFIT_TAKE = {
-    "EPL": 1.00,       # 100% — triggers 90% of the time, locks in gains early
-    "NBA": 1.50,       # 150% — moderate, higher edge on bigger swings
-    "NBASPREAD": 1.50, # 150%
-    "NCAAMB": 1.00,    # 100% — high variance, take profits fast
-    "NFLSPREAD": 2.00, # 200% — keep current
-    "NFLTD": 1.00,     # 100%
-    "NHL": 1.00,       # 100% — games resolve correctly, take early
-    "NHLSPREAD": 3.00, # 300% — rare but massive when it hits
-    "UCL": 1.00,       # 100%
-    "UFC": 2.00,       # 200% — keep current
-    "WNBA": 1.00,      # 100%
-    "ATP": 1.00,       # 100% — default for new sports
-    "CFB": 2.00,       # 200% — default until validated
-    "WTA": 1.50,       # 150% — RE-ENABLED: best Sharpe at 76-90c with 150% PT
-    "MLB": 0.50,       # 50% — take profits fast, weak FLB only viable with quick exits
-    "LALIGA": 2.00,    # 200% — optimization confirmed current 200% is optimal
-    "MLBTOTAL": 1.00,  # 100% — best new market, 82% WR
-    "NFLGW": 1.00,     # 100% — NFL game winners
-    "NFLTT": 1.50,     # 150% — NFL team totals
-    "CBA": 1.00,       # 100% — Chinese basketball
-    "LIGUE1": 1.00,    # 100% — French soccer
-    "LOL": 1.00,       # 100% — League of Legends esports
-    "ATPCH": 0.50,     # 50% — ATP Challenger, take profits fast
-    # Player props — hold to settlement by default (binary prop outcomes)
-    # Props have higher variance so profit-take is less reliable
-    "NBA_3PT": 2.00,   # 200% — high variance, let winners run
-    "NBA_PTS": 1.50,   # 150% — moderate
-    "NBA_REB": 1.50,   # 150% — moderate
-    "NBA_AST": 1.50,   # 150% — moderate
+# Sport-specific BASE profit-take thresholds (from optimization backtest)
+# These are the optimal PT% for mid-range entries (16-25c NO).
+# Dynamic function scales these by entry price.
+SPORT_BASE_PT = {
+    # Props: HOLD to settlement (None = no PT)
+    "NBA_3PT": None, "NBA_PTS": None, "NBA_REB": None, "NBA_AST": None,
+    "NBA_STL": 200, "NFLTD": None, "NFLTT": None,
+    "NFL_1ST_TD": None, "NHL_GOAL": None,
+    "NFL_REC_YDS": 500, "NHL_PTS": 500, "NHL_AST": 500,
+    # Game winners
+    "NBA": 200, "NHL": 50, "NFLGW": 100,
+    "WTA": 150, "ATP": 500, "NCAAMB": 100,
+    "NCAAWB": 300, "UCL": 300, "WNBA": 200, "CFB": 200,
+    "MLB": 100,
+    # Spreads
+    "NHLSPREAD": 200, "NBASPREAD": 100, "NFLSPREAD": 75,
+    # New markets
+    "NCAAF_TOTAL": 200, "CS2": 500, "MLS": 200,
+    "EUROLEAGUE": 200, "LOL_GAME": 200,
+    "DARTS": 500, "EREDIVISIE": 300,
 }
-AUTO_PROFIT_TAKE_PCT: float = 1.50  # Fallback for sports not in SPORT_PROFIT_TAKE
+
+AUTO_PROFIT_TAKE_PCT: float = 1.50  # Fallback only used in position_monitor generic section
+
+
+def get_dynamic_pt(sport: str, entry_price: "Decimal") -> float | None:
+    """
+    Get dynamic profit-take threshold based on sport AND entry price.
+
+    Key insight from backtest: cheap entries should let winners run longer
+    (high upside potential), expensive entries should take profits quickly
+    (limited upside).
+
+    Returns the PT threshold as a float (e.g., 2.0 = 200%), or None for HOLD.
+    """
+    base = SPORT_BASE_PT.get(sport)
+    if base is None:
+        return None  # HOLD to settlement
+
+    # Scale by entry NO price (entry_price is the NO price we paid)
+    entry_cents = int(float(entry_price) * 100)
+
+    if entry_cents <= 15:
+        # Cheap entries: huge upside potential, let winners run
+        return min(base * 3, 500) / 100.0
+    elif entry_cents <= 25:
+        # Mid-range: use the sport-specific optimal
+        return base / 100.0
+    elif entry_cents <= 35:
+        # Standard: take profits faster
+        return max(base // 2, 50) / 100.0
+    else:
+        # Expensive: grab any gain quickly
+        return 50 / 100.0
 
 # Tail-risk stop: sell dying positions at $0.05-0.10 to exploit retail FLB on lottery tickets
 # Retail overpays for longshots — selling a 2% chance at $0.08 is positive EV
@@ -316,8 +336,8 @@ class PositionMonitor:
                 pnl_pct = float((current_price - position.avg_price) / position.avg_price) if position.avg_price > 0 else 0.0
 
                 # Sport-specific profit-take (from optimization grid backtest)
-                pt_threshold = SPORT_PROFIT_TAKE.get(pos_sport, AUTO_PROFIT_TAKE_PCT)
-                if pnl_pct >= pt_threshold:
+                pt_threshold = get_dynamic_pt(pos_sport, position.avg_price)
+                if pt_threshold is not None and pnl_pct >= pt_threshold:
                     console.print(
                         f"[green]GW PROFIT TAKE: {position.kalshi_ticker[:35]} up {pnl_pct:+.0%}! "
                         f"({pos_sport} threshold: {pt_threshold:.0%}) "
@@ -384,8 +404,9 @@ class PositionMonitor:
             float(abs(unrealized_pnl) / bankroll) if bankroll > 0 and unrealized_pnl < 0 else 0.0
         )
 
-        # === RULE 1: AUTO PROFIT-TAKE at 200% gain ===
-        if pnl_pct >= AUTO_PROFIT_TAKE_PCT:
+        # === RULE 1: AUTO PROFIT-TAKE (dynamic by sport + entry price) ===
+        auto_pt = get_dynamic_pt(pos_sport if pos_sport else "OTHER", entry_price)
+        if auto_pt is not None and pnl_pct >= auto_pt:
             console.print(
                 f"[green]AUTO PROFIT TAKE: {ticker} up {pnl_pct:+.0%}! "
                 f"Selling to lock in ${unrealized_pnl:+.2f}.[/green]"
