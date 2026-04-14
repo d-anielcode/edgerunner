@@ -62,15 +62,15 @@ class AllGatesResult:
     passed: bool
     gates: list[GateResult] = field(default_factory=list)
     rejection_reason: str = ""
-    kelly_multiplier: float = 1.0  # Tiered drawdown reduces this below 1.0
+    # Note: kelly_multiplier removed — tiered HWM drawdown scaling is done
+    # exclusively by UnitizedRiskManager in main.py, not here.
 
     def summary(self) -> str:
         """One-line summary of gate results."""
         passed_gates = [g.gate_name for g in self.gates if g.passed]
         failed_gates = [f"{g.gate_name}: {g.reason}" for g in self.gates if not g.passed]
-        km = f" (kelly_mult={self.kelly_multiplier:.2f})" if self.kelly_multiplier < 1.0 else ""
         if self.passed:
-            return f"ALL GATES PASSED ({len(passed_gates)}/6){km}"
+            return f"ALL GATES PASSED ({len(passed_gates)}/6)"
         return f"BLOCKED by {failed_gates[0]}" if failed_gates else "BLOCKED (unknown)"
 
 
@@ -119,15 +119,14 @@ class RiskGates:
         else:
             self._consecutive_losses = 0
 
-    def _check_drawdown(self, current_bankroll: Decimal) -> tuple[GateResult, float]:
+    def _check_drawdown(self, current_bankroll: Decimal) -> GateResult:
         """
         Gate 1: Consecutive loss cooldown.
-        Tiered HWM drawdown is now handled externally by UnitizedRiskManager.
+        Tiered HWM drawdown scaling is handled externally by UnitizedRiskManager.
+        This gate only enforces the hard consecutive-loss cooldown and the halted state.
         """
         if self._halted:
-            return GateResult("DRAWDOWN", False, f"HALTED: {self._halt_reason}"), 0.0
-
-        kelly_mult = 1.0
+            return GateResult("DRAWDOWN", False, f"HALTED: {self._halt_reason}")
 
         # Check consecutive losses
         if self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
@@ -138,10 +137,10 @@ class RiskGates:
                     "DRAWDOWN", False,
                     f"{self._consecutive_losses} consecutive losses. "
                     f"Cooling down for {remaining:.0f}s more."
-                ), 0.0
+                )
             self._consecutive_losses = 0
 
-        return GateResult("DRAWDOWN", True, "Consecutive loss check passed"), kelly_mult
+        return GateResult("DRAWDOWN", True, "Consecutive loss check passed")
 
     # --- Gate 2: Fee-Adjusted Edge ---
 
@@ -294,8 +293,8 @@ class RiskGates:
                 rejection_reason=g0.reason,
             )
 
-        # Gate 1: Drawdown (tiered — returns kelly_multiplier)
-        g1, kelly_mult = self._check_drawdown(current_bankroll)
+        # Gate 1: Drawdown / consecutive loss cooldown
+        g1 = self._check_drawdown(current_bankroll)
         results.append(g1)
         if not g1.passed:
             return AllGatesResult(
@@ -332,7 +331,6 @@ class RiskGates:
             passed=all_passed,
             gates=results,
             rejection_reason=rejection,
-            kelly_multiplier=kelly_mult if all_passed else 0.0,
         )
 
     def get_status(self) -> dict:

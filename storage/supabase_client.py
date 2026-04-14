@@ -34,6 +34,7 @@ TABLE_DAILY_PNL: str = "daily_pnl"
 TABLE_BRIER_SCORES: str = "brier_scores"
 TABLE_FILLS: str = "fills"
 TABLE_PORTFOLIO_SNAPSHOTS: str = "portfolio_snapshots"
+TABLE_SIGNALS: str = "signals"
 
 
 async def get_client() -> AsyncClient:

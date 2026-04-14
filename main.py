@@ -240,6 +240,17 @@ class EdgeRunner:
                         f"[yellow]Smart money signal: {msg.market_title} — "
                         f"{msg.consensus_side.upper()} ({msg.trader_count} traders)[/yellow]"
                     )
+                    # Log smart money signal to Supabase for future analysis
+                    try:
+                        from storage.supabase_client import insert_row, TABLE_SIGNALS
+                        await insert_row(TABLE_SIGNALS, {
+                            "signal_type": "smart_money",
+                            "ticker": msg.market_title if hasattr(msg, 'market_title') else str(msg),
+                            "value": msg.consensus_side if hasattr(msg, 'consensus_side') else "",
+                            "metadata": f"traders={getattr(msg, 'trader_count', 0)}, size=${getattr(msg, 'total_size_usd', 0)}",
+                        })
+                    except Exception:
+                        pass
 
                 # Drain remaining queue items
                 while not self._queue.empty():
@@ -252,6 +263,17 @@ class EdgeRunner:
                                 f"[yellow]Smart money signal: {batch_msg.market_title} — "
                                 f"{batch_msg.consensus_side.upper()} ({batch_msg.trader_count} traders)[/yellow]"
                             )
+                            # Log smart money signal to Supabase for future analysis
+                            try:
+                                from storage.supabase_client import insert_row, TABLE_SIGNALS
+                                await insert_row(TABLE_SIGNALS, {
+                                    "signal_type": "smart_money",
+                                    "ticker": batch_msg.market_title if hasattr(batch_msg, 'market_title') else str(batch_msg),
+                                    "value": batch_msg.consensus_side if hasattr(batch_msg, 'consensus_side') else "",
+                                    "metadata": f"traders={getattr(batch_msg, 'trader_count', 0)}, size=${getattr(batch_msg, 'total_size_usd', 0)}",
+                                })
+                            except Exception:
+                                pass
                     except asyncio.QueueEmpty:
                         break
 
@@ -899,16 +921,16 @@ class EdgeRunner:
             "KXUFCFIGHT",                              # UFC/MMA
             "KXNCAAMBGAME",                            # NCAA Men's Basketball
             "KXNCAAWBGAME",                            # NCAA Women's Basketball
-            "KXWTAMATCH",                              # WTA Tennis — RE-ENABLED: 150% PT at 76-90c rescues it (Sharpe 0.183)
+            # "KXWTAMATCH",                            # WTA Tennis — disabled: no SPORT_PARAMS entry, wastes API calls
             "KXATPMATCH",                              # ATP Tennis — year-round, strong FLB 71-85c, +2.5% retirement premium
             "KXCFBGAME",                               # College Football — Sep-Jan, strong FLB at 90c+, conservative until validated
-            "KXMLBGAME",                               # MLB — 50% PT at 76-84c, very conservative (small sample)
-            "KXMLBTOTAL",                              # MLB Totals — BEST new market: 0.815 Sharpe, 82% WR, 100% PT
-            "KXNFLGAME",                               # NFL Game Winners — 0.244 Sharpe, 66% WR, 100% PT
+            # "KXMLBGAME",                             # MLB Game Winners — disabled: no SPORT_PARAMS entry; very few qualifying trades
+            # "KXMLBTOTAL",                            # MLB Totals — disabled: no SPORT_PARAMS entry; wastes orderbook polling
+            # "KXNFLGAME",                             # NFL Game Winners — disabled: off-season; no SPORT_PARAMS entry (NFLGW disabled)
             # "KXNFLTEAMTOTAL",                        # NFL Team Totals — disabled: +16% ROI after slippage (below 20% threshold)
-            "KXCBAGAME",                               # CBA (Chinese Basketball) — +39% ROI, 57% WR
+            # "KXCBAGAME",                             # CBA (Chinese Basketball) — disabled: no SPORT_PARAMS entry, wastes API calls
             # "KXLIGUE",                               # Ligue 1 — disabled: +4% ROI after slippage (below 20% threshold)
-            "KXLOLMAP",                                # League of Legends — +69% ROI, 75% WR
+            # "KXLOLMAP",                              # League of Legends — disabled: no SPORT_PARAMS entry, wastes API calls
             # "KXATPCHALLENGERMATCH",                  # ATP Challenger — disabled: +0.2% ROI after slippage (breakeven)
             # Weather DISABLED: These are categorical range markets (5-50c per bucket),
             # NOT binary favorites. No FLB to exploit — avg YES price is 22c.
