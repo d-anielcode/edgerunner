@@ -748,8 +748,137 @@ def api_sport_breakdown():
 
 
 # ---------------------------------------------------------------------------
+# Supabase-backed endpoints (faster, no Kalshi API pagination)
+# ---------------------------------------------------------------------------
+
+def _get_supabase_sync():
+    """Get a sync Supabase client for dashboard queries."""
+    try:
+        from supabase import create_client
+        url = os.environ.get("SUPABASE_URL", "")
+        key = os.environ.get("SUPABASE_ANON_KEY", "")
+        if not url or not key:
+            # Try loading from .env
+            from dotenv import load_dotenv
+            load_dotenv(PROJECT_ROOT / ".env")
+            url = os.environ.get("SUPABASE_URL", "")
+            key = os.environ.get("SUPABASE_ANON_KEY", "")
+        if url and key:
+            return create_client(url, key)
+    except Exception:
+        pass
+    return None
+
+
+@app.route("/api/supabase/fills")
+def api_supabase_fills():
+    """Query fills directly from Supabase (fast, no Kalshi API needed)."""
+    sb = _get_supabase_sync()
+    if not sb:
+        return jsonify({"error": "Supabase not configured"}), 500
+
+    days = int(request.args.get("days", 7))
+    try:
+        result = sb.table("fills").select("*").order(
+            "created_at", desc=True
+        ).limit(500).execute()
+
+        fills = []
+        for row in result.data:
+            parsed = _parse_ticker(row.get("ticker", ""))
+            fills.append({
+                "time": row.get("created_at", "")[:19],
+                "ticker": row.get("ticker", ""),
+                "sport": row.get("sport", parsed["sport"]),
+                "date": parsed["date"],
+                "matchup": parsed["matchup"],
+                "pick": parsed["pick"],
+                "action": row.get("action", ""),
+                "side": row.get("side", ""),
+                "count": float(row.get("count", 0)),
+                "cash_change": float(row.get("cash_change", 0)),
+                "balance_after": float(row.get("balance_after", 0)),
+                "fee": float(row.get("fee", 0)),
+            })
+        return jsonify(fills)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/supabase/equity")
+def api_supabase_equity():
+    """Portfolio equity curve from Supabase snapshots (instant, accurate)."""
+    sb = _get_supabase_sync()
+    if not sb:
+        return jsonify({"error": "Supabase not configured"}), 500
+
+    try:
+        result = sb.table("portfolio_snapshots").select("*").order(
+            "created_at", desc=False
+        ).limit(2000).execute()
+
+        points = []
+        for row in result.data:
+            points.append({
+                "time": row.get("created_at", "")[:19],
+                "balance": float(row.get("balance", 0)),
+                "portfolio_value": float(row.get("portfolio_value", 0)),
+                "nav": float(row.get("nav", 0)) if row.get("nav") else None,
+                "positions": row.get("positions_count", 0),
+                "trigger": row.get("trigger", ""),
+            })
+        return jsonify(points)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/supabase/stats")
+def api_supabase_stats():
+    """Quick stats from Supabase fills."""
+    sb = _get_supabase_sync()
+    if not sb:
+        return jsonify({"error": "Supabase not configured"}), 500
+
+    try:
+        result = sb.table("fills").select("*").execute()
+        fills = result.data
+
+        total_trades = len(fills)
+        buys = [f for f in fills if f.get("action") == "buy"]
+        sells = [f for f in fills if f.get("action") == "sell"]
+        settlements = [f for f in fills if f.get("action") == "settlement"]
+
+        total_spent = sum(abs(float(f.get("cash_change", 0))) for f in buys)
+        total_received = sum(float(f.get("cash_change", 0)) for f in sells + settlements)
+        net_pnl = total_received - total_spent
+
+        # Per-sport breakdown
+        sports = {}
+        for f in fills:
+            sport = f.get("sport", "OTHER")
+            if sport not in sports:
+                sports[sport] = {"trades": 0, "pnl": 0.0}
+            sports[sport]["trades"] += 1
+            sports[sport]["pnl"] += float(f.get("cash_change", 0))
+
+        return jsonify({
+            "total_fills": total_trades,
+            "buys": len(buys),
+            "sells": len(sells),
+            "settlements": len(settlements),
+            "total_spent": round(total_spent, 2),
+            "total_received": round(total_received, 2),
+            "net_pnl": round(net_pnl, 2),
+            "sports": [{"sport": k, **v} for k, v in sorted(sports.items(), key=lambda x: -x[1]["pnl"])],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import os
     app.run(host="0.0.0.0", port=5050, debug=True)

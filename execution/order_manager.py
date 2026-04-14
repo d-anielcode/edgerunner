@@ -197,7 +197,40 @@ class OrderManager:
         # Step 5: Log to Supabase (non-blocking — don't crash if DB fails)
         await self._log_trade(trade)
 
-        # Step 6: Update cache (skip in dry-run — don't alter local state)
+        # Step 6: Log fill + portfolio snapshot to Supabase
+        try:
+            from storage.supabase_client import insert_row, TABLE_FILLS, TABLE_PORTFOLIO_SNAPSHOTS
+            from config.markets import get_sport
+
+            no_price = float(trade.price) if decision.action == "BUY_NO" else float(1 - trade.price)
+            yes_price = 1.0 - no_price
+            fee = float(kelly.fee_per_contract * trade.quantity) if hasattr(kelly, 'fee_per_contract') else 0.0
+            cash_change = -(no_price * float(trade.quantity) + fee)
+
+            await insert_row(TABLE_FILLS, {
+                "ticker": trade.kalshi_ticker,
+                "sport": get_sport(trade.kalshi_ticker) or "OTHER",
+                "action": "buy",
+                "side": trade.side,
+                "count": float(trade.quantity),
+                "yes_price": round(yes_price, 4),
+                "no_price": round(no_price, 4),
+                "fee": round(fee, 4),
+                "cash_change": round(cash_change, 4),
+                "balance_after": round(float(cache.get_bankroll()), 2),
+                "is_taker": True,
+            })
+
+            await insert_row(TABLE_PORTFOLIO_SNAPSHOTS, {
+                "balance": round(float(cache.get_bankroll()), 2),
+                "portfolio_value": round(float(cache.get_portfolio_value()), 2),
+                "positions_count": cache.get_position_count(),
+                "trigger": "fill_buy",
+            })
+        except Exception:
+            pass  # Non-critical — never crash the trading loop
+
+        # Step 7: Update cache (skip in dry-run — don't alter local state)
         if not DRY_RUN:
             position = Position(
                 kalshi_ticker=decision.target_market_id,

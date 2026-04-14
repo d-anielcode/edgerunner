@@ -531,6 +531,40 @@ class PositionMonitor:
             self._cache.set_bankroll(new_bankroll)
             console.print(f"[blue]Bankroll updated after exit: +${proceeds:.2f} -> ${new_bankroll:.2f}[/blue]")
 
+            # Log sell fill + snapshot to Supabase
+            try:
+                from storage.supabase_client import insert_row, TABLE_FILLS, TABLE_PORTFOLIO_SNAPSHOTS
+                from config.markets import get_sport
+
+                sell_no_price = float(current_price)  # NO price at time of sell
+                sell_yes_price = 1.0 - sell_no_price
+                # When selling YES to close NO: cash_in = no_price * count - fee
+                sell_fee = 0.0  # Fee is captured in the Kalshi response but not easily available here
+                sell_cash = sell_no_price * float(position.quantity)  # Approximate (fee not subtracted)
+
+                await insert_row(TABLE_FILLS, {
+                    "ticker": position.kalshi_ticker,
+                    "sport": pos_sport,
+                    "action": "sell",
+                    "side": position.side,
+                    "count": float(position.quantity),
+                    "yes_price": round(sell_yes_price, 4),
+                    "no_price": round(sell_no_price, 4),
+                    "fee": 0.0,
+                    "cash_change": round(sell_cash, 4),
+                    "balance_after": round(float(new_bankroll), 2),
+                    "is_taker": True,
+                })
+
+                await insert_row(TABLE_PORTFOLIO_SNAPSHOTS, {
+                    "balance": round(float(new_bankroll), 2),
+                    "portfolio_value": round(float(self._cache.get_portfolio_value()), 2),
+                    "positions_count": self._cache.get_position_count(),
+                    "trigger": "fill_sell",
+                })
+            except Exception:
+                pass
+
             # Send Discord exit alert
             try:
                 pnl = (current_price - position.avg_price) * position.quantity

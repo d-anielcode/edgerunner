@@ -179,6 +179,37 @@ class BrierTracker:
                                     self._risk_gates.update_after_trade(pnl, new_bankroll)
                                     # Remove settled position from cache
                                     self._cache.remove_position(ticker)
+
+                                    # Log settlement to Supabase
+                                    try:
+                                        from storage.supabase_client import insert_row, TABLE_FILLS, TABLE_PORTFOLIO_SNAPSHOTS
+                                        from config.markets import get_sport as _gs_settle
+
+                                        settle_sport = _gs_settle(ticker) or "OTHER"
+                                        settle_pnl = float(pnl)
+                                        await insert_row(TABLE_FILLS, {
+                                            "ticker": ticker,
+                                            "sport": settle_sport,
+                                            "action": "settlement",
+                                            "side": "no",
+                                            "count": float(pos.quantity) if hasattr(pos, 'quantity') else 0,
+                                            "yes_price": 0,
+                                            "no_price": 0,
+                                            "fee": 0,
+                                            "cash_change": round(settle_pnl, 4),
+                                            "balance_after": round(float(new_bankroll), 2),
+                                            "is_taker": False,
+                                        })
+
+                                        await insert_row(TABLE_PORTFOLIO_SNAPSHOTS, {
+                                            "balance": round(float(new_bankroll), 2),
+                                            "portfolio_value": round(float(self._cache.get_portfolio_value()), 2),
+                                            "positions_count": self._cache.get_position_count(),
+                                            "trigger": "settlement",
+                                        })
+                                    except Exception:
+                                        pass
+
                                     win = "WIN" if pnl > 0 else "LOSS"
                                     console.print(
                                         f"[{'green' if pnl > 0 else 'red'}]SETTLED: {ticker[:35]} "
