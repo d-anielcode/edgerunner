@@ -241,12 +241,12 @@ SPORT_PARAMS = {
     "NBA_AST": {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # RE-ENABLED from comprehensive backtest
     "CPI":    {"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.15},
     # --- NEW MARKETS (backtest-validated, Sharpe > 0.05) ---
-    "NFL_1ST_TD": {"kelly_mult": 0.25, "max_position": 0.12, "min_edge": 0.05},  # Sharpe 7.21, extreme longshot bias
-    "NHL_GOAL":   {"kelly_mult": 0.20, "max_position": 0.10, "min_edge": 0.08},  # Sharpe 0.98, player goals
-    "NHL_AST":    {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.08},  # Sharpe 0.41
+    "NFL_1ST_TD": {"kelly_mult": 0.25, "max_position": 0.12, "min_edge": 0.10},  # Sharpe 7.21, extreme longshot bias
+    "NHL_GOAL":   {"kelly_mult": 0.20, "max_position": 0.10, "min_edge": 0.10},  # Sharpe 0.98, player goals
+    "NHL_AST":    {"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.10},  # Sharpe 0.41
     "NHL_PTS":    {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Sharpe 0.15
     "NBA_STL":    {"kelly_mult": 0.12, "max_position": 0.06, "min_edge": 0.10},  # Sharpe 0.27
-    "NFL_REC_YDS":{"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.08},  # Sharpe 0.27, 1435 trades
+    "NFL_REC_YDS":{"kelly_mult": 0.15, "max_position": 0.08, "min_edge": 0.10},  # Sharpe 0.27, 1435 trades
     "NCAAF_TOTAL":{"kelly_mult": 0.08, "max_position": 0.04, "min_edge": 0.10},  # Sharpe 0.06, 1698 trades
     "CS2":        {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Sharpe 0.14
     "MLS":        {"kelly_mult": 0.10, "max_position": 0.05, "min_edge": 0.10},  # Sharpe 0.13

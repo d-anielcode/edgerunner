@@ -65,9 +65,14 @@ SPORT_BASE_PT = {
     "NBA": 200, "NHL": 50, "NFLGW": 100,
     "WTA": 150, "ATP": 500, "NCAAMB": 100,
     "NCAAWB": 300, "UCL": 300, "WNBA": 200, "CFB": 200,
-    "MLB": 100,
-    # Spreads
+    "MLB": 100, "EPL": 100, "LALIGA": 200,
+    # Spreads / totals
     "NHLSPREAD": 200, "NBASPREAD": 100, "NFLSPREAD": 75,
+    "NBA2D": 150,
+    # Weather / CPI — binary events, take profits early
+    "WEATHER": 100, "CPI": 100,
+    # Disabled but covered for safety
+    "NHLFG": 200,
     # New markets
     "NCAAF_TOTAL": 200, "CS2": 500, "MLS": 200,
     "EUROLEAGUE": 200, "LOL_GAME": 200,
