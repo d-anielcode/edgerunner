@@ -214,13 +214,28 @@ class KalshiClient:
             console.print(f"[red]Invalid price ${price} — must be $0.01-$0.99.[/red]")
             return None
 
+        # Check if market supports fractional trading
+        # If not, round down to integer contracts (Kalshi rejects fractional on non-fractional markets)
+        try:
+            market_info = await self.get_market(ticker)
+            fractional_ok = market_info.get("fractional_trading_enabled", False)
+        except Exception:
+            fractional_ok = False  # Default to integer if we can't check
+
+        if not fractional_ok:
+            count = int(count)  # Floor to integer
+            if count < 1:
+                console.print(f"[yellow]Order skipped: {count} contracts < 1 (non-fractional market)[/yellow]")
+                return None
+
         # Build order payload
         price_field = "yes_price_dollars" if side == "yes" else "no_price_dollars"
+        count_str = f"{count:.2f}" if fractional_ok else str(int(count))
         order_data = {
             "ticker": ticker,
             "side": side,
             "action": action,
-            "count_fp": f"{count:.2f}",
+            "count_fp": count_str,
             price_field: f"{price:.4f}",
             "client_order_id": str(uuid.uuid4()),
         }
