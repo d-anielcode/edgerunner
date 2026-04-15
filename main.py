@@ -1378,12 +1378,9 @@ class EdgeRunner:
 
                     # Apply daily Bayesian decay (old priors fade, recent data weighs more)
                     try:
-                        from data.bayesian_cache import apply_daily_decay, load_bayesian_state, save_bayesian_state
-                        bstate = load_bayesian_state()
-                        if bstate:
-                            bstate = apply_daily_decay(bstate)
-                            save_bayesian_state(bstate)
-                            console.print(f"[blue]Bayesian: Applied daily decay to {len(bstate)} buckets[/blue]")
+                        from data.bayesian_cache import apply_daily_time_decay
+                        apply_daily_time_decay()
+                        console.print("[blue]Bayesian: Applied daily time decay[/blue]")
                     except Exception:
                         pass
 
