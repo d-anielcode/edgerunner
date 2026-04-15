@@ -532,15 +532,15 @@ class RulesEvaluator:
         # The original -71% April loss was caused by the Kelly override bug + NBA/NHL
         # playoff edge decay, not a universal April problem. ATP/EPL/La Liga are fine.
         now = datetime.now(timezone.utc)
-        if now.month == 4 and sport in ("NBA", "NHL", "NBASPREAD", "NHLSPREAD", "NHLFG"):
-            kelly_fraction *= 0.50
-            modifiers.append("april_playoff_0.5x")
-
-        # Modifier 3: NBA early R1 playoff reduction (Apr 13-30)
-        if sport == "NBA":
-            if now.month == 4 and 13 <= now.day <= 30:
+        if now.month == 4:
+            if sport == "NBA" and 13 <= now.day <= 30:
+                # NBA early R1 playoffs: severe reduction (replaces general April cut)
                 kelly_fraction *= 0.25
                 modifiers.append("nba_early_playoff_0.25x")
+            elif sport in ("NBA", "NHL", "NBASPREAD", "NHLSPREAD", "NHLFG"):
+                # General April playoff decay for hockey and NBA pre-R1
+                kelly_fraction *= 0.50
+                modifiers.append("april_playoff_0.5x")
 
         # Modifier 3: NFL TD January boost (playoff TDs)
         # January NFL TD has +92.9% ROI, 67% NO win rate

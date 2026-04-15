@@ -198,7 +198,11 @@ class PositionMonitor:
     def _is_player_prop(self, ticker: str) -> bool:
         """Check if a ticker is a player prop market."""
         ticker_upper = ticker.upper()
-        prop_prefixes = ["KXNBAPTS", "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBABLK", "KXNBASTL", "KXNBA2D"]
+        prop_prefixes = [
+            "KXNBAPTS", "KXNBAREB", "KXNBAAST", "KXNBA3PT", "KXNBABLK", "KXNBASTL",
+            "KXNHLGOAL", "KXNHLAST", "KXNHLPTS",
+            "KXNFLFIRSTTD", "KXNFLRECYDS", "KXNFLANYTD",
+        ]
         return any(ticker_upper.startswith(prefix) for prefix in prop_prefixes)
 
     def _get_prop_type(self, ticker: str) -> str:
