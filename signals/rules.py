@@ -174,11 +174,11 @@ EDGE_TABLES = {
     "NFL_1ST_TD": {(55, 95): 0.000},  # 100% NO win rate
     "NHL_GOAL":   {(85, 95): 0.410},
     "NHL_AST":    {(55, 65): 0.412, (66, 75): 0.308},
-    "NHL_PTS":    {(55, 65): 0.497, (66, 75): 0.585, (76, 85): 0.714, (85, 95): 0.850},
+    "NHL_PTS":    {(55, 65): 0.497, (66, 75): 0.585, (76, 85): 0.714, (86, 95): 0.850},
     "NBA_STL":    {(55, 65): 0.563, (66, 75): 0.435, (85, 95): 0.200},
-    "NFL_REC_YDS":{(55, 65): 0.430, (66, 75): 0.584, (76, 85): 0.640, (85, 95): 0.748},
+    "NFL_REC_YDS":{(55, 65): 0.430, (66, 75): 0.584, (76, 85): 0.640, (86, 95): 0.748},
     "NCAAF_TOTAL":{(55, 65): 0.500, (66, 75): 0.480, (76, 85): 0.450},
-    "CS2":        {(55, 65): 0.548, (66, 75): 0.630, (76, 85): 0.694, (85, 95): 0.704},
+    "CS2":        {(55, 65): 0.548, (66, 75): 0.630, (76, 85): 0.694, (86, 95): 0.704},
     "MLS":        {(55, 65): 0.543, (66, 75): 0.622, (76, 85): 0.633},
     "EUROLEAGUE": {(55, 65): 0.530, (66, 75): 0.580, (76, 85): 0.700},
     "LOL_GAME":   {(55, 65): 0.520, (66, 75): 0.560, (76, 85): 0.620},
@@ -353,7 +353,9 @@ class RulesEvaluator:
         LOW_EDGE_SPORTS = ("WEATHER", "CPI", "NFLTD", "NFLTT", "NBA_3PT", "NBA_PTS", "NBA_REB",
                            "NFL_1ST_TD", "NHL_GOAL", "NHL_AST", "NHL_PTS", "NBA_STL",
                            "NFL_REC_YDS", "NCAAF_TOTAL", "CS2", "MLS", "EUROLEAGUE",
-                           "LOL_GAME", "DARTS", "EREDIVISIE", "NBA_AST", "NCAAMB")
+                           "LOL_GAME", "DARTS", "EREDIVISIE", "NBA_AST", "NCAAMB",
+                           "WNBA", "NFLGW", "NHLSPREAD", "NBASPREAD", "NFLSPREAD",
+                           "NBA2D", "MLB", "WTA", "ATP", "CFB", "NHLFG")
         min_price = Decimal("0.55") if sport in LOW_EDGE_SPORTS else MIN_YES_PRICE
         max_price = Decimal("0.90") if sport in LOW_EDGE_SPORTS else MAX_YES_PRICE
 

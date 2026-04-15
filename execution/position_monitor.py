@@ -341,7 +341,7 @@ class PositionMonitor:
                 pnl_pct = float((current_price - position.avg_price) / position.avg_price) if position.avg_price > 0 else 0.0
 
                 # Sport-specific profit-take (from optimization grid backtest)
-                pt_threshold = get_dynamic_pt(pos_sport, position.avg_price)
+                pt_threshold = get_dynamic_pt(pos_sport or "OTHER", position.avg_price)
                 if pt_threshold is not None and pnl_pct >= pt_threshold:
                     console.print(
                         f"[green]GW PROFIT TAKE: {position.kalshi_ticker[:35]} up {pnl_pct:+.0%}! "
