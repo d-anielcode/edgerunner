@@ -718,9 +718,10 @@ class EdgeRunner:
 
             # Discord alert
             from config.markets import get_sport as _gs
-            from execution.position_monitor import SPORT_PROFIT_TAKE, AUTO_PROFIT_TAKE_PCT
+            from execution.position_monitor import get_dynamic_pt
             _trade_sport = _gs(trade.kalshi_ticker)
-            _trade_pt = SPORT_PROFIT_TAKE.get(_trade_sport, AUTO_PROFIT_TAKE_PCT) * 100
+            _dyn_pt = get_dynamic_pt(_trade_sport or "OTHER", trade.price)
+            _trade_pt = (_dyn_pt * 100) if _dyn_pt is not None else 0.0  # 0 = HOLD
 
             await self._alerter.send_trade_alert(
                 ticker=trade.kalshi_ticker,
