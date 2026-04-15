@@ -23,7 +23,11 @@ from decimal import Decimal
 import aiohttp
 from rich.console import Console
 
-from config.settings import DEBUG_MODE, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from config.settings import DEBUG_MODE
+
+import os
+TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 console = Console()
 UTC = timezone.utc

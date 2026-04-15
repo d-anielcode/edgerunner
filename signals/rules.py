@@ -171,7 +171,7 @@ EDGE_TABLES = {
     "NBA_REB": {(55, 64): 0.574, (65, 74): 0.629, (75, 84): 0.701, (85, 95): 0.864},  # Sharpe 0.132, 860 trades
     "NBA_AST": {(55, 64): 0.582, (65, 74): 0.644, (75, 84): 0.747, (85, 95): 0.827},  # RE-ENABLED from comprehensive backtest
     # --- NEW MARKETS (from comprehensive backtest optimization) ---
-    "NFL_1ST_TD": {(55, 95): 0.000},  # 100% NO win rate
+    "NFL_1ST_TD": {(55, 95): 0.050},  # Near-100% NO WR (0.05 floor prevents degenerate Kelly)
     "NHL_GOAL":   {(85, 95): 0.410},
     "NHL_AST":    {(55, 65): 0.412, (66, 75): 0.308},
     "NHL_PTS":    {(55, 65): 0.497, (66, 75): 0.585, (76, 85): 0.714, (86, 95): 0.850},
@@ -447,7 +447,8 @@ class RulesEvaluator:
             bkey = _bucket_key(sport, yes_price_cents)
             bbucket = bstate.get(bkey)
             if bbucket and bbucket.get("updates", 0) >= 3:
-                ba, bb = bbucket["alpha"], bbucket["beta"]
+                ba = bbucket.get("slow_alpha", bbucket.get("alpha", 10.0))
+                bb = bbucket.get("slow_beta", bbucket.get("beta", 10.0))
                 btotal = ba + bb
                 posterior_std = (ba * bb / (btotal ** 2 * (btotal + 1))) ** 0.5
                 actual_yes_rate = actual_yes_rate + posterior_std
