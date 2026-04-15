@@ -390,6 +390,15 @@ def _update_cusum(state: dict, sport: str, result: str) -> None:
         )
         cusum_state[sport] = 0.0  # Reset after alarm
         cusum_state[f"{sport}_alarmed"] = True
+        # Record total updates at alarm time for auto-clear countdown
+        sport_buckets = [
+            v for k, v in state.items()
+            if k.startswith(sport + "_") and not k.startswith("_")
+            and isinstance(v, dict)
+        ]
+        cusum_state[f"{sport}_alarm_updates"] = sum(
+            b.get("updates", 0) for b in sport_buckets
+        )
     else:
         cusum_state[sport] = round(s, 4)
 
@@ -407,16 +416,19 @@ def get_cusum_confidence(sport: str) -> float:
     cusum = meta.get("cusum", {})
 
     if cusum.get(f"{sport}_alarmed", False):
-        # Auto-clear alarm after enough new data
+        # Auto-clear alarm after 50 events SINCE the alarm was set
         sport_buckets = [
             v for k, v in state.items()
             if k.startswith(sport + "_") and not k.startswith("_")
             and isinstance(v, dict)
         ]
-        recent_updates = sum(b.get("updates", 0) for b in sport_buckets)
-        if recent_updates > 50:
+        total_updates = sum(b.get("updates", 0) for b in sport_buckets)
+        updates_at_alarm = cusum.get(f"{sport}_alarm_updates", 0)
+        updates_since_alarm = total_updates - updates_at_alarm
+        if updates_since_alarm >= 50:
             # Clear alarm, let CUSUM re-evaluate
             cusum[f"{sport}_alarmed"] = False
+            cusum.pop(f"{sport}_alarm_updates", None)
             meta["cusum"] = cusum
             state["_meta"] = meta
             save_bayesian_state(state)

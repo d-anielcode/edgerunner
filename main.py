@@ -523,16 +523,8 @@ class EdgeRunner:
             if existing_side == new_side:
                 # Already holding this exact position — don't double up
                 return
-        # Block if we have a resting (unfilled) maker order on this ticker
-        import time as _time
-        from config.settings import RESTING_ORDER_TIMEOUT_SECONDS
-        if ticker in self._resting_order_times:
-            elapsed = _time.monotonic() - self._resting_order_times[ticker]
-            if elapsed < RESTING_ORDER_TIMEOUT_SECONDS:
-                return  # Order still resting, don't duplicate
             else:
-                del self._resting_order_times[ticker]  # Expired, allow new order
-            if existing_side != new_side:
+                # Opposite side — block to avoid netting out
                 await log_decision(
                     ticker=ticker, title=ticker, action=decision.action,
                     edge=decision.edge, kelly_fraction=decision.kelly_fraction,
@@ -543,6 +535,15 @@ class EdgeRunner:
                     rejection_reason="Opposite-side auto-net block", market_type=market_type,
                 )
                 return
+        # Block if we have a resting (unfilled) maker order on this ticker
+        import time as _time
+        from config.settings import RESTING_ORDER_TIMEOUT_SECONDS
+        if ticker in self._resting_order_times:
+            elapsed = _time.monotonic() - self._resting_order_times[ticker]
+            if elapsed < RESTING_ORDER_TIMEOUT_SECONDS:
+                return  # Order still resting, don't duplicate
+            else:
+                del self._resting_order_times[ticker]  # Expired, allow new order
 
         # BUY_NO probability direction
         if decision.action == "BUY_NO" and decision.agent_calculated_probability > decision.implied_market_probability:
@@ -914,13 +915,13 @@ class EdgeRunner:
         for prefix in [
             "KXNBAGAME", "KXNBASPREAD", "KXNBAPTS",  # NBA
             "KXNHLGAME",                               # NHL
-            "KXEPLGAME",                               # EPL Soccer
+            # "KXEPLGAME",                             # EPL — disabled: 0% WR realistic backtest, no SPORT_PARAMS
             # "KXUCLGAME",                             # UCL — disabled: -49% ROI after slippage
-            "KXLALIGAGAME",                            # La Liga
+            # "KXLALIGAGAME",                          # La Liga — disabled: 0% WR realistic backtest, no SPORT_PARAMS
             "KXWNBAGAME",                              # WNBA
-            "KXUFCFIGHT",                              # UFC/MMA
+            # "KXUFCFIGHT",                            # UFC — disabled: 0% WR realistic backtest, no SPORT_PARAMS
             "KXNCAAMBGAME",                            # NCAA Men's Basketball
-            "KXNCAAWBGAME",                            # NCAA Women's Basketball
+            # "KXNCAAWBGAME",                          # NCAA Women's Basketball — disabled: -19.7% ROI, no SPORT_PARAMS
             "KXWTAMATCH",                              # WTA Tennis — RE-ENABLED from comprehensive backtest
             "KXATPMATCH",                              # ATP Tennis — year-round, strong FLB 71-85c, +2.5% retirement premium
             "KXCFBGAME",                               # College Football — Sep-Jan, strong FLB at 90c+, conservative until validated
@@ -1304,15 +1305,7 @@ class EdgeRunner:
             except Exception as e:
                 console.print(f"[red]Market re-discovery error: {e} (will retry in 30min)[/red]")
 
-            # Check if we've passed the last game's end time + buffer
-            if shutdown_target and now >= shutdown_target:
-                has_open_positions = self._cache.get_position_count() > 0
-                if has_open_positions:
-                    console.print(
-                        "[yellow]Auto-shutdown: Past game end time but "
-                        f"{self._cache.get_position_count()} positions still open. Waiting...[/yellow]"
-                    )
-                    continue
+            # (Auto-shutdown removed — agent runs continuously)
 
 
     async def _daily_recap_task(self) -> None:
